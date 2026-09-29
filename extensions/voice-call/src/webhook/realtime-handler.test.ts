@@ -1447,7 +1447,7 @@ describe("RealtimeCallHandler path routing", () => {
         }
 
         await waitForRealtimeTest(() => {
-          expect(handleBargeIn).toHaveBeenCalledWith({ audioPlaybackActive: false });
+          expect(handleBargeIn).not.toHaveBeenCalled();
           expect(outboundMessages.filter((message) => message.event === "clear").length).toBe(
             clearCountBeforeBargeIn + 1,
           );
