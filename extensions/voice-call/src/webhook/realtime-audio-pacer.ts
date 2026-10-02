@@ -67,6 +67,7 @@ export class RealtimeAudioPacer {
       onBackpressure?: () => void;
       /** Fires whenever queued audio and playback state are discarded. */
       onPlaybackReset?: () => void;
+      onAudioSent?: (audio: Buffer) => void;
       send: RealtimeAudioSend;
       serializer: Pick<StreamFrameAdapter, "serializeMedia" | "serializeClear" | "serializeMark">;
     },
@@ -325,6 +326,7 @@ export class RealtimeAudioPacer {
       this.params.serializer.serializeMedia(item.chunk.toString("base64")),
     );
     if (sent) {
+      this.params.onAudioSent?.(item.chunk);
       item.segment.sentMs += item.durationMs;
       this.sentAudioMs += item.durationMs;
       item.segment.lastSentEndMs = this.sentAudioMs;

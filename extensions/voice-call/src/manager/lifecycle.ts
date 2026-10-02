@@ -14,7 +14,10 @@ type CallLifecycleContext = Pick<
   "activeCalls" | "providerCallIdMap" | "storePath" | "stateRuntime"
 > &
   Partial<
-    Pick<CallManagerContext, "transcriptWaiters" | "maxDurationTimers" | "notifyHangupTimers">
+    Pick<
+      CallManagerContext,
+      "transcriptWaiters" | "maxDurationTimers" | "notifyHangupTimers" | "onCallUpdated"
+    >
   >;
 
 /** Finalize under the manager mutation queue, publishing cleanup only after persistence. */
@@ -63,4 +66,5 @@ export async function finalizeCall(params: {
   if (call.providerCallId && ctx.providerCallIdMap.get(call.providerCallId) === call.callId) {
     ctx.providerCallIdMap.delete(call.providerCallId);
   }
+  ctx.onCallUpdated?.(call);
 }

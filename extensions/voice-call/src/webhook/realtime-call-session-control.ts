@@ -2,15 +2,22 @@ import { randomUUID } from "node:crypto";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import {
   buildRealtimeVoiceSpeakExactMessage,
+  calculateMulawRms,
   type RealtimeVoiceAudioSink,
   type RealtimeVoiceBridgeSession,
   type RealtimeVoiceSessionHarness,
 } from "openclaw/plugin-sdk/realtime-voice";
+import { CallBriefSchema } from "../call-brief.js";
 import { validateDtmfDigits } from "../dtmf.js";
+import { DEFAULT_VOICEMAIL_HOLD_OPENING_MAX_MS } from "../errand-config.js";
 import { createDtmfInterSequenceGapMulaw, createDtmfMulaw } from "../telephony-audio.js";
+import type { CallRecord } from "../types.js";
 import type { RealtimeAudioPacer } from "./realtime-audio-pacer.js";
 
 export const OUTBOUND_GREETING_FALLBACK_MS = 3_000;
+export const REALTIME_MEDIA_INACTIVITY_TIMEOUT_MS = 30_000;
+export const REALTIME_DISCONNECT_HANGUP_GRACE_MS = 2_000;
+const ASSISTANT_SPEECH_RMS_THRESHOLD = 0.035;
 
 export type RealtimeCallControlResult = {
   success: boolean;
@@ -63,6 +70,15 @@ export function sendRealtimeDtmf(
   }
 }
 
+export function buildForcedConsultSpeechPrompt(result: string): string {
+  return [
+    "Internal OpenClaw consult result is ready.",
+    "Do not call tools for this internal result.",
+    "Speak the following answer to the caller now, briefly and naturally:",
+    result,
+  ].join("\n");
+}
+
 export function buildGreetingInstructions(
   baseInstructions: string | undefined,
   greeting: string | undefined,
@@ -83,8 +99,24 @@ export function createOutboundGreetingController(params: {
   enabled: boolean;
   instructions?: string;
   fallbackMs?: number;
+  holdOpeningMaxMs?: number;
+  call?: Pick<CallRecord, "direction" | "metadata">;
+  acknowledge?: (instructions: string) => void;
 }) {
+  const waitForAnsweringMachine =
+    params.call?.direction === "outbound" &&
+    params.call.metadata?.voicemailManagedByHost &&
+    params.call.metadata?.mode !== "notify"
+      ? () => params.call?.metadata?.answeredBy
+      : undefined;
+  let speechMs = 0;
+  let silenceMs = 0;
+  let acknowledged = false;
   let claimed = !params.enabled;
+  let closed = false;
+  let waitingForAmd = Boolean(waitForAnsweringMachine);
+  let machineDetected = false;
+  let readySession: RealtimeVoiceBridgeSession | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const clearTimer = () => {
     if (timer) {
@@ -92,8 +124,32 @@ export function createOutboundGreetingController(params: {
       timer = undefined;
     }
   };
-  const claim = () => {
-    if (claimed) {
+  const triggerOpening = () => {
+    if (!closed && readySession && params.instructions && claim()) {
+      readySession.triggerGreeting(params.instructions);
+    }
+  };
+  const isBlocked = (): boolean => {
+    const answeredBy = waitForAnsweringMachine?.();
+    if (
+      typeof answeredBy === "string" &&
+      (answeredBy.startsWith("machine_") || answeredBy === "fax")
+    ) {
+      machineDetected = true;
+      clearTimer();
+    }
+    if (machineDetected) {
+      return true;
+    }
+    if (waitingForAmd && (answeredBy === "human" || answeredBy === "unknown")) {
+      waitingForAmd = false;
+      clearTimer();
+      triggerOpening();
+    }
+    return waitingForAmd;
+  };
+  const claim = (): boolean => {
+    if (closed || isBlocked() || claimed) {
       return false;
     }
     claimed = true;
@@ -102,8 +158,50 @@ export function createOutboundGreetingController(params: {
   };
   return {
     claim,
-    close: clearTimer,
+    isBlocked,
+    noteInputAudio(audio: Buffer) {
+      if (closed || !readySession || !isBlocked() || machineDetected || acknowledged) return;
+      if (calculateMulawRms(audio) >= ASSISTANT_SPEECH_RMS_THRESHOLD) {
+        speechMs += audio.length / 8;
+        silenceMs = 0;
+      } else {
+        silenceMs += audio.length / 8;
+        if (silenceMs >= 240) speechMs = 0;
+      }
+      if (speechMs <= 3_000) return;
+      acknowledged = true;
+      const brief = CallBriefSchema.safeParse(params.call?.metadata?.brief);
+      const language = brief.success ? brief.data.language : undefined;
+      params.acknowledge?.(
+        [
+          `Say only a short acknowledgement${language ? ` in ${JSON.stringify(language)}` : ""}, then stop and wait. Do not call tools.`,
+          /^(es(?:[-_]|$)|spanish|español)/i.test(language ?? "")
+            ? "Sí, un momento"
+            : "Yes, one moment.",
+        ].join("\n"),
+      );
+    },
+    close() {
+      closed = true;
+      clearTimer();
+    },
     onReady(session: RealtimeVoiceBridgeSession) {
+      readySession = session;
+      if (closed || machineDetected) {
+        return;
+      }
+      if (isBlocked()) {
+        if (!timer && !machineDetected) {
+          timer = setTimeout(() => {
+            if (isBlocked() && !machineDetected && !closed) {
+              waitingForAmd = false;
+              triggerOpening();
+            }
+          }, params.holdOpeningMaxMs ?? DEFAULT_VOICEMAIL_HOLD_OPENING_MAX_MS);
+          timer.unref?.();
+        }
+        return;
+      }
       if (!params.enabled || !params.instructions || claimed) {
         return;
       }
@@ -120,8 +218,10 @@ export function createOutboundGreetingController(params: {
 
 export function createRealtimeCallActivityController(params: {
   idleHangupMs?: number;
-  mediaInactivityMs: number;
-  mediaGraceMs: number;
+  mediaInactivityMs?: number;
+  mediaGraceMs?: number;
+  /** While true (for example an answering-machine hold), speech idle is not timed. */
+  isPaused?: () => boolean;
   onIdle: () => void;
   onMediaWarning: () => void;
   onMediaTimeout: () => void;
@@ -145,14 +245,20 @@ export function createRealtimeCallActivityController(params: {
   };
   const resetIdle = () => {
     clearIdle();
-    if (closed || !started || !params.idleHangupMs || consultsInFlight > 0) {
+    if (
+      closed ||
+      !started ||
+      !params.idleHangupMs ||
+      consultsInFlight > 0 ||
+      params.isPaused?.() === true
+    ) {
       return;
     }
     idleTimer = setTimeout(params.onIdle, params.idleHangupMs);
     idleTimer.unref?.();
   };
   return {
-    beginConsult() {
+    beginConsult(this: void) {
       consultsInFlight += 1;
       clearIdle();
     },
@@ -161,22 +267,25 @@ export function createRealtimeCallActivityController(params: {
       clearIdle();
       clearMedia();
     },
-    endConsult() {
+    endConsult(this: void) {
       consultsInFlight = Math.max(0, consultsInFlight - 1);
       if (consultsInFlight === 0) {
         resetIdle();
       }
     },
-    noteMedia() {
+    noteMedia(this: void) {
       if (closed) {
         return;
       }
       clearMedia();
       mediaTimer = setTimeout(() => {
         params.onMediaWarning();
-        mediaTimer = setTimeout(params.onMediaTimeout, params.mediaGraceMs);
+        mediaTimer = setTimeout(
+          params.onMediaTimeout,
+          params.mediaGraceMs ?? REALTIME_DISCONNECT_HANGUP_GRACE_MS,
+        );
         mediaTimer.unref?.();
-      }, params.mediaInactivityMs);
+      }, params.mediaInactivityMs ?? REALTIME_MEDIA_INACTIVITY_TIMEOUT_MS);
       mediaTimer.unref?.();
     },
     noteSpeech: resetIdle,
@@ -194,27 +303,18 @@ export function createRealtimeDtmfController(params: {
 }) {
   let active = false;
   let generation = 0;
-  let releaseTimer: ReturnType<typeof setTimeout> | undefined;
-  const clearReleaseTimer = () => {
-    if (releaseTimer) {
-      clearTimeout(releaseTimer);
-      releaseTimer = undefined;
-    }
-  };
   const release = (expectedGeneration: number) => {
     if (generation !== expectedGeneration) {
       return;
     }
     active = false;
-    clearReleaseTimer();
   };
   return {
     close() {
       active = false;
-      clearReleaseTimer();
     },
     isActive: () => active,
-    send(digits: string) {
+    send(this: void, digits: string) {
       const audio = createDtmfMulaw(digits);
       if (audio.length === 0) {
         throw new Error("DTMF sequence produced no audio");
@@ -222,18 +322,21 @@ export function createRealtimeDtmfController(params: {
       generation += 1;
       const currentGeneration = generation;
       if (!active) {
-        params.interruptModelOutput();
+        active = true;
+        try {
+          params.interruptModelOutput();
+        } catch (error) {
+          active = false;
+          throw error;
+        }
       } else {
         params.audioPacer.sendAudio(createDtmfInterSequenceGapMulaw());
       }
       active = true;
-      clearReleaseTimer();
       params.audioPacer.sendAudio(audio);
       const markName = `openclaw-dtmf-${randomUUID()}`;
       params.pendingMarkAcks.set(markName, () => release(currentGeneration));
       params.audioPacer.sendMark(markName);
-      releaseTimer = setTimeout(() => release(currentGeneration), audio.length / 8 + 1_000);
-      releaseTimer.unref?.();
     },
   };
 }
@@ -244,6 +347,8 @@ export function createRealtimeCallAudioController(params: {
   harness: RealtimeVoiceSessionHarness;
   isDtmfActive: () => boolean;
   isOpen: () => boolean;
+  isBlocked?: () => boolean;
+  onAudibleOutput?: () => void;
   pendingMarkAcks: Map<string, () => void>;
   providerCallId: string;
 }) {
@@ -285,8 +390,12 @@ export function createRealtimeCallAudioController(params: {
   const audioSink: RealtimeVoiceAudioSink = {
     isOpen: params.isOpen,
     sendAudio: (muLaw, metadata) => {
-      if (params.isDtmfActive()) {
+      if (params.isDtmfActive() || params.isBlocked?.()) {
         return;
+      }
+      // Silent model frames do not count as the assistant speaking.
+      if (muLaw.length > 0 && calculateMulawRms(muLaw) >= ASSISTANT_SPEECH_RMS_THRESHOLD) {
+        params.onAudibleOutput?.();
       }
       params.harness.recordOutputAudio(muLaw);
       params.audioPacer.sendAudio(muLaw, metadata);

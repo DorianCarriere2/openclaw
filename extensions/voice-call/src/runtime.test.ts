@@ -462,6 +462,16 @@ describe("createVoiceCallRuntime lifecycle", () => {
     expect(defaultRegistration.agentId).toBe("operator");
     expect(defaultRegistration.instructions).toContain("- Name: Main Voice");
     expect(defaultRegistration.instructions.match(/Agent context:/g)).toHaveLength(1);
+    const briefRegistration = resolveCallRegistration({
+      callId: "call-brief",
+      direction: "outbound",
+      from: "+15550001111",
+      to: "+15550002222",
+      metadata: { brief: { task: "Arrange a plumber visit", approvals: "No paid work" } },
+    });
+    expect(briefRegistration.instructions).toContain("Arrange a plumber visit");
+    expect(briefRegistration.instructions).toContain("No paid work");
+    expect(defaultRegistration.instructions).not.toContain("Arrange a plumber visit");
 
     const supportRegistration = resolveCallRegistration({
       callId: "call-support",
@@ -595,7 +605,11 @@ describe("createVoiceCallRuntime lifecycle", () => {
       direction: "outbound",
       from: "+15550001234",
       to: "+15550009999",
-      metadata: { requesterSessionKey: "agent:main:discord:channel:general" },
+      metadata: {
+        requesterSessionKey: "agent:main:discord:channel:general",
+        brief: { task: "Check shipment reference ABC" },
+        ownerInstructions: ["Ask for tomorrow delivery"],
+      },
       transcript: [{ speaker: "user", text: "Can you check shipment status?" }],
     });
 
@@ -652,6 +666,8 @@ describe("createVoiceCallRuntime lifecycle", () => {
     });
     expect(consultParams.extraSystemPrompt).toContain("one or two bounded read-only queries");
     expect(consultParams.extraSystemPrompt).toContain('bound call id is "call-1"');
+    expect(consultParams.extraSystemPrompt).toContain("Check shipment reference ABC");
+    expect(consultParams.extraSystemPrompt).toContain("Ask for tomorrow delivery");
     expect(consultParams.prompt).toContain("Caller: Can you check shipment status?");
     expect(consultParams.prompt).toContain("Caller: Also check the ETA.");
   });

@@ -14,6 +14,8 @@ import {
 } from "openclaw/plugin-sdk/realtime-voice";
 import { normalizeAgentId } from "openclaw/plugin-sdk/routing";
 import type { OpenClawPluginApi } from "../api.js";
+import { buildCallBriefInstructions } from "./call-brief.js";
+import { createCallDeliveryRuntime } from "./call-delivery-runtime.js";
 import type { VoiceCallConfig } from "./config.js";
 import {
   resolveVoiceCallEffectiveConfig,
@@ -102,6 +104,7 @@ function createRuntimeResourceLifecycle(params: {
   config: VoiceCallConfig;
   webhookServer: VoiceCallWebhookServer;
   manager: CallManager;
+  stopDelivery?: () => Promise<void>;
 }): {
   setTunnelResult: (result: TunnelResult | null) => void;
   stop: (opts?: { suppressErrors?: boolean }) => Promise<void>;
@@ -126,6 +129,9 @@ function createRuntimeResourceLifecycle(params: {
           },
           () => cleanupTailscaleExposure(params.config),
           () => params.webhookServer.stop(),
+          async () => {
+            await params.stopDelivery?.();
+          },
           () => params.manager.stop(),
         ]) {
           try {
@@ -252,9 +258,10 @@ async function createRealtimeInstructionsResolver(params: {
   return (call) => {
     const numberRouteKey = resolveVoiceCallNumberRouteKeyForCall(call);
     const effectiveConfig = resolveVoiceCallEffectiveConfig(params.config, numberRouteKey).config;
-    return (
-      instructionsByAgentId.get(resolveCallAgentId(call, effectiveConfig)) ?? genericInstructions
-    );
+    const instructions =
+      instructionsByAgentId.get(resolveCallAgentId(call, effectiveConfig)) ?? genericInstructions;
+    const brief = buildCallBriefInstructions(call);
+    return brief ? `${instructions}\n\n${brief}` : instructions;
   };
 }
 
@@ -266,6 +273,8 @@ export async function createVoiceCallRuntime(params: {
   stateRuntime?: VoiceCallStateRuntime["state"];
   ttsRuntime?: TelephonyTtsRuntime;
   logger?: PluginLogger;
+  deliveryRuntime?: Pick<OpenClawPluginApi["runtime"], "gateway" | "subagent">;
+  runInServiceContext?: <T>(run: () => T) => T;
 }): Promise<VoiceCallRuntime> {
   const {
     config: rawConfig,
@@ -355,6 +364,7 @@ export async function createVoiceCallRuntime(params: {
       config.serve.path,
       webhookServer.getStreamDisconnectLifecycle(),
       cfg,
+      config.voicemail.holdOpeningMaxMs,
     );
     if (config.realtime.toolPolicy !== "none") {
       realtimeHandler.registerToolHandler(
@@ -446,15 +456,44 @@ export async function createVoiceCallRuntime(params: {
             toolBindings: {
               voice_call: { kind: "active-call", callId: call.callId },
             },
-            extraSystemPrompt: `${REALTIME_VOICE_CONSULT_SYSTEM_PROMPT} The bound call id is ${JSON.stringify(call.callId)}.`,
+            extraSystemPrompt: `${REALTIME_VOICE_CONSULT_SYSTEM_PROMPT} The bound call id is ${JSON.stringify(call.callId)}.\n\n${buildCallBriefInstructions(call)}`,
             abortSignal: handlerContext.abortSignal,
           });
         },
       );
     }
+    manager.playRealtimeVoicemail = (callId, instructions) =>
+      realtimeHandler.playVoicemail(callId, instructions);
+    manager.beforeCarrierPlayback = (callId) => realtimeHandler.prepareCarrierPlayback(callId);
+    if (config.reports.enabled || config.live.transcript || config.voicemail.detection !== "off") {
+      manager.beforeCallEnd = (call) => realtimeHandler.drainCall(call.callId);
+    }
     webhookServer.setRealtimeHandler(realtimeHandler);
   }
-  const lifecycle = createRuntimeResourceLifecycle({ config, webhookServer, manager });
+  const delivery =
+    (config.reports.enabled || config.live.transcript) &&
+    params.deliveryRuntime &&
+    params.runInServiceContext
+      ? createCallDeliveryRuntime({
+          config,
+          coreConfig: cfg,
+          runtime: params.deliveryRuntime,
+          runInServiceContext: params.runInServiceContext,
+          manager,
+          logger: log,
+        })
+      : undefined;
+  if ((config.reports.enabled || config.live.transcript) && !delivery) {
+    log.warn(
+      "[voice-call] Reports/live transcript require the plugin delivery runtime; transcripts remain in call history.",
+    );
+  }
+  const lifecycle = createRuntimeResourceLifecycle({
+    config,
+    webhookServer,
+    manager,
+    stopDelivery: delivery?.stop,
+  });
 
   const localUrl = await webhookServer.start();
 

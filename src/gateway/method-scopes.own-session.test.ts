@@ -5,8 +5,27 @@ import {
   authorizeOperatorScopesForRequiredScope,
   projectOperatorScopesForMethod,
 } from "./method-scopes.js";
+import { createSyntheticPluginRuntimeClient } from "./server-plugin-runtime-client.js";
 
 describe("session-scoped method admission", () => {
+  it.each([
+    ["sessions.describe", { key: "agent:main:requester" }, { allowed: true }],
+    ["send", { sessionKey: "agent:main:requester" }, { allowed: true }],
+    [
+      "chat.inject",
+      { sessionKey: "agent:main:requester" },
+      { allowed: false, missingScope: "operator.admin" },
+    ],
+  ] as const)(
+    "checks requester delivery method %s against the real plugin client grant",
+    (method, params, expected) => {
+      const client = createSyntheticPluginRuntimeClient({ pluginRuntimeOwnerId: "voice-call" });
+      expect(authorizeOperatorScopesForMethod(method, client.connect.scopes ?? [], params)).toEqual(
+        expected,
+      );
+    },
+  );
+
   it.each([
     ["agent.identity.get", { agentId: "main" }],
     ["agents.list", {}],

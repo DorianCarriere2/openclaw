@@ -6,6 +6,7 @@ import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { isAllowlistedCaller, normalizePhoneNumber } from "../allowlist.js";
 import { resolveVoiceCallEffectiveConfig, resolveVoiceCallSessionKey } from "../config.js";
 import { TerminalStates, type CallRecord, type NormalizedEvent } from "../types.js";
+import { buildCallbackMetadata, findRecentOutboundCallback } from "./callbacks.js";
 import type { CallManagerContext } from "./context.js";
 import { finalizeCall } from "./lifecycle.js";
 import { findCall } from "./lookup.js";
@@ -19,6 +20,7 @@ import {
 import { addTranscriptEntry, copyCallRecord, transitionState } from "./state.js";
 import { findCallInStore, persistCallRecord } from "./store.js";
 import { resolveTranscriptWaiter, startMaxDurationTimer } from "./timers.js";
+import { playDetectedCallMessage } from "./voicemail.js";
 
 const log = createSubsystemLogger("voice-call/events");
 
@@ -39,6 +41,10 @@ type EventContext = Pick<
   | "endCallOperations"
   | "onCallAnswered"
   | "onCallerSpeech"
+  | "onCallUpdated"
+  | "beforeCallEnd"
+  | "beforeCarrierPlayback"
+  | "playRealtimeVoicemail"
   | "streamSessionIssuer"
   | "mutationQueue"
   | "trackCallWork"
@@ -91,6 +97,7 @@ async function createWebhookCall(params: {
   direction: "inbound" | "outbound";
   from: string;
   to: string;
+  callback?: CallRecord;
 }): Promise<CallRecord> {
   const callId = crypto.randomUUID();
   const effective = resolveVoiceCallEffectiveConfig(
@@ -98,6 +105,7 @@ async function createWebhookCall(params: {
     params.direction === "inbound" ? params.to : undefined,
   );
   const effectiveConfig = effective.config;
+  const agentId = normalizeAgentId(params.callback?.agentId ?? effectiveConfig.agentId);
 
   const callRecord: CallRecord = {
     callId,
@@ -108,12 +116,12 @@ async function createWebhookCall(params: {
     from: params.from,
     to: params.to,
     sessionKey: resolveVoiceCallSessionKey({
-      config: effectiveConfig,
+      config: { ...effectiveConfig, agentId },
       callId,
       phone: params.direction === "outbound" ? params.to : params.from,
       coreSession: params.ctx.coreSession,
     }),
-    agentId: normalizeAgentId(effectiveConfig.agentId),
+    agentId,
     startedAt: Date.now(),
     transcript: [],
     processedEventIds: [],
@@ -123,6 +131,7 @@ async function createWebhookCall(params: {
           ? effectiveConfig.inboundGreeting || "Hello! How can I help you today?"
           : undefined,
       ...(effective.numberRouteKey ? { numberRouteKey: effective.numberRouteKey } : {}),
+      ...(params.callback ? buildCallbackMetadata(params.callback, effectiveConfig) : {}),
     },
   };
 
@@ -162,10 +171,35 @@ async function persistRejectedInboundCall(params: {
   await persistCallRecord(params.ctx.storePath, rejectedCall, params.ctx.stateRuntime);
 }
 
-export function processEvent(
+export async function processEvent(
   ctx: EventContext,
   event: NormalizedEvent,
 ): Promise<ProcessEventResult> {
+  if (event.type === "call.ended" || (event.type === "call.error" && !event.retryable)) {
+    const call =
+      findCall({
+        activeCalls: ctx.activeCalls,
+        providerCallIdMap: ctx.providerCallIdMap,
+        callIdOrProviderCallId: event.callId,
+      }) ??
+      (event.providerCallId
+        ? findCall({
+            activeCalls: ctx.activeCalls,
+            providerCallIdMap: ctx.providerCallIdMap,
+            callIdOrProviderCallId: event.providerCallId,
+          })
+        : undefined);
+    // Bridge close emits final transcripts through this same queue, so drain outside it.
+    if (call && ctx.beforeCallEnd) {
+      try {
+        await ctx.beforeCallEnd(call);
+      } catch (error) {
+        log.warn(
+          `Failed to drain final transcript for ${call.callId}: ${formatErrorMessage(error)}`,
+        );
+      }
+    }
+  }
   return ctx.mutationQueue.enqueue("state", () => processEventInQueue(ctx, event));
 }
 
@@ -220,7 +254,9 @@ async function processEventInQueue(
   if (!call && providerCallId && eventDirection) {
     // Apply inbound policy for true inbound calls; external outbound-api calls
     // are implicitly trusted because the caller controls the webhook URL.
-    if (eventDirection === "inbound" && !shouldAcceptInbound(ctx.config, event.from)) {
+    const callback =
+      eventDirection === "inbound" ? await findRecentOutboundCallback(ctx, event.from) : undefined;
+    if (eventDirection === "inbound" && !callback && !shouldAcceptInbound(ctx.config, event.from)) {
       const pid = providerCallId;
       if (!ctx.provider) {
         log.warn(
@@ -264,6 +300,7 @@ async function processEventInQueue(
       direction: eventDirection === "outbound" ? "outbound" : "inbound",
       from: event.from || "unknown",
       to: event.to || ctx.config.fromNumber || "unknown",
+      callback,
     });
 
     // Normalize event to internal ID for downstream consumers.
@@ -275,6 +312,14 @@ async function processEventInQueue(
   }
 
   const activeCall = copyCallRecord(call);
+  if (event.answeredBy) {
+    activeCall.metadata = {
+      ...activeCall.metadata,
+      answeredByFirst:
+        activeCall.metadata?.answeredByFirst ?? activeCall.metadata?.answeredBy ?? event.answeredBy,
+      answeredBy: event.answeredBy,
+    };
+  }
   const previousCall = { providerCallId: call.providerCallId };
   const shouldCommitReplayKey = !(event.type === "call.error" && event.retryable);
   const effects: Array<() => void> = [];
@@ -313,6 +358,56 @@ async function processEventInQueue(
   if (shouldCommitReplayKey) {
     appendCallReplayKey(activeCall.processedEventIds, dedupeKey);
   }
+
+  if (
+    event.answeredBy &&
+    event.type !== "call.ended" &&
+    event.type !== "call.error" &&
+    activeCall.direction === "outbound" &&
+    ctx.config.voicemail.detection === "twilio" &&
+    (activeCall.provider === "twilio" || activeCall.provider === "mock")
+  ) {
+    const detectedCall = call;
+    const machine = event.answeredBy.startsWith("machine_");
+    if (machine && !activeCall.metadata?.voicemailStatus) {
+      if (ctx.config.voicemail.onMachine === "hang-up") {
+        activeCall.metadata = { ...activeCall.metadata, voicemailStatus: "hang-up" };
+        delete activeCall.metadata.pendingNotifyAmd;
+        effects.push(() =>
+          ctx.trackCallWork(endCall(ctx, detectedCall.callId, { reason: "voicemail" })),
+        );
+      } else if (event.answeredBy.startsWith("machine_end_")) {
+        activeCall.metadata = { ...activeCall.metadata, voicemailStatus: "pending" };
+        delete activeCall.metadata.pendingNotifyAmd;
+        effects.push(() =>
+          ctx.trackCallWork(playDetectedCallMessage(ctx, detectedCall, "voicemail")),
+        );
+      }
+    } else if (
+      activeCall.metadata?.pendingNotifyAmd &&
+      (event.answeredBy === "human" || event.answeredBy === "unknown")
+    ) {
+      activeCall.metadata = { ...activeCall.metadata, notifyStatus: "pending" };
+      delete activeCall.metadata.pendingNotifyAmd;
+      effects.push(() => ctx.trackCallWork(playDetectedCallMessage(ctx, detectedCall, "notify")));
+    } else if (activeCall.metadata?.pendingNotifyAmd && event.answeredBy === "fax") {
+      activeCall.metadata = {
+        ...activeCall.metadata,
+        notifyStatus: "failed",
+        notifyError: "A fax answered the call",
+      };
+      delete activeCall.metadata.pendingNotifyAmd;
+      effects.push(() =>
+        ctx.trackCallWork(endCall(ctx, detectedCall.callId, { reason: "failed" })),
+      );
+    }
+  }
+  const carrierStatusKey =
+    activeCall.metadata?.voicemailStatus === "playing"
+      ? "voicemailStatus"
+      : activeCall.metadata?.notifyStatus === "playing"
+        ? "notifyStatus"
+        : undefined;
 
   switch (event.type) {
     case "call.initiated": {
@@ -362,6 +457,9 @@ async function processEventInQueue(
       activeCall.answeredAt = event.timestamp;
       transitionState(activeCall, "answered");
       effects.push(startDurationTimer, () => ctx.onCallAnswered?.(call));
+      break;
+
+    case "call.amd":
       break;
 
     case "call.active":
@@ -418,11 +516,20 @@ async function processEventInQueue(
       break;
 
     case "call.ended":
+      if (carrierStatusKey) {
+        activeCall.metadata = {
+          ...activeCall.metadata,
+          [carrierStatusKey]: event.reason === "completed" ? "left" : "failed",
+        };
+      }
       await finalizeCall({
         ctx,
         call,
         preparedCall: activeCall,
-        endReason: event.reason,
+        endReason:
+          event.reason === "completed" && carrierStatusKey === "voicemailStatus"
+            ? "voicemail"
+            : event.reason,
         endedAt: event.timestamp,
       });
       publishProviderCallId(true);
@@ -431,6 +538,15 @@ async function processEventInQueue(
 
     case "call.error":
       if (!event.retryable) {
+        if (carrierStatusKey) {
+          const errorKey =
+            carrierStatusKey === "voicemailStatus" ? "voicemailError" : "notifyError";
+          activeCall.metadata = {
+            ...activeCall.metadata,
+            [carrierStatusKey]: "failed",
+            [errorKey]: event.error,
+          };
+        }
         await finalizeCall({
           ctx,
           call,
@@ -456,6 +572,7 @@ async function processEventInQueue(
     rememberManagerReplayKey(ctx.processedEventIds, dedupeKey);
   }
   if (!ctx.isStopping()) {
+    ctx.onCallUpdated?.(call);
     for (const effect of effects) {
       effect();
     }

@@ -86,6 +86,9 @@ export class MockProvider implements VoiceCallProvider {
       case "call.active":
         return { ...base, type: evt.type };
 
+      case "call.amd":
+        return evt.answeredBy ? { ...base, type: evt.type, answeredBy: evt.answeredBy } : null;
+
       case "call.speaking": {
         return {
           ...base,
@@ -167,6 +170,10 @@ export class MockProvider implements VoiceCallProvider {
 
   async playTts(_input: PlayTtsInput): Promise<void> {
     // No-op for mock
+  }
+
+  async playMessageAndHangup(_input: PlayTtsInput): Promise<void> {
+    // Playback is simulated; completion is driven by a call.ended webhook.
   }
 
   async sendDtmf(_input: SendDtmfInput): Promise<void> {

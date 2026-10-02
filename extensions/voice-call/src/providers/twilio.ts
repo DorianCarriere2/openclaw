@@ -297,6 +297,7 @@ export class TwilioProvider implements VoiceCallProvider {
         callIdOverride: callIdFromQuery,
         dedupeKey,
         turnToken: turnTokenFromQuery,
+        amdCallback: normalizeOptionalString(ctx.query?.type) === "amd",
       });
 
       if (
@@ -348,22 +349,35 @@ export class TwilioProvider implements VoiceCallProvider {
       callIdOverride?: string;
       dedupeKey?: string;
       turnToken?: string;
+      amdCallback?: boolean;
     },
   ): NormalizedEvent | null {
     const callSid = params.get("CallSid") || "";
     const callIdOverride = options?.callIdOverride;
 
+    const answeredBy = params.get("AnsweredBy")?.trim().toLowerCase();
     const baseEvent = {
       id: crypto.randomUUID(),
       dedupeKey: options?.dedupeKey,
       callId: callIdOverride || callSid,
       providerCallId: callSid,
       timestamp: Date.now(),
+      ...(answeredBy ? { answeredBy } : {}),
       turnToken: options?.turnToken,
       direction: TwilioProvider.parseDirection(params.get("Direction")),
       from: params.get("From") || undefined,
       to: params.get("To") || undefined,
     };
+
+    if (answeredBy) {
+      console.log(
+        `[voice-call] AMD classification callId=${baseEvent.callId} answeredBy=${answeredBy} at=${baseEvent.timestamp}`,
+      );
+    }
+
+    if (options?.amdCallback && answeredBy) {
+      return { ...baseEvent, type: "call.amd", answeredBy };
+    }
 
     // Handle speech result (from <Gather>)
     const speechResult = params.get("SpeechResult");
@@ -384,7 +398,8 @@ export class TwilioProvider implements VoiceCallProvider {
     }
 
     // Handle call status changes
-    const callStatus = normalizeProviderStatus(params.get("CallStatus"));
+    const rawCallStatus = params.get("CallStatus");
+    const callStatus = normalizeProviderStatus(rawCallStatus);
     if (callStatus === "initiated") {
       return { ...baseEvent, type: "call.initiated" };
     }
@@ -402,6 +417,15 @@ export class TwilioProvider implements VoiceCallProvider {
       return event;
     }
 
+    if (
+      callSid &&
+      baseEvent.direction === "inbound" &&
+      rawCallStatus === null &&
+      !params.has("SpeechResult") &&
+      !params.has("Digits")
+    ) {
+      return { ...baseEvent, type: "call.initiated" };
+    }
     return null;
   }
 
@@ -425,7 +449,8 @@ export class TwilioProvider implements VoiceCallProvider {
    */
   private generateTwimlResponse(ctx: WebhookContext): string {
     const params = new URLSearchParams(ctx.rawBody);
-    const isStatusCallback = normalizeOptionalString(ctx.query?.type) === "status";
+    const callbackType = normalizeOptionalString(ctx.query?.type);
+    const isStatusCallback = callbackType === "status" || callbackType === "amd";
     const callId = normalizeOptionalString(ctx.query?.callId);
     const callStatus = params.get("CallStatus");
     const direction = params.get("Direction");
@@ -456,7 +481,8 @@ export class TwilioProvider implements VoiceCallProvider {
 
   consumeInitialTwiML(ctx: WebhookContext): string | null {
     const params = new URLSearchParams(ctx.rawBody);
-    const isStatusCallback = normalizeOptionalString(ctx.query?.type) === "status";
+    const callbackType = normalizeOptionalString(ctx.query?.type);
+    const isStatusCallback = callbackType === "status" || callbackType === "amd";
     const callId = normalizeOptionalString(ctx.query?.callId);
     const callSid = params.get("CallSid") || undefined;
     if (!callId || isStatusCallback) {
@@ -573,6 +599,26 @@ export class TwilioProvider implements VoiceCallProvider {
       Timeout: "30",
     };
 
+    if (input.voicemail?.detection === "twilio") {
+      const amdUrl = new URL(url.toString());
+      amdUrl.searchParams.set("type", "amd");
+      params.MachineDetection =
+        input.voicemail.onMachine === "leave-message" ? "DetectMessageEnd" : "Enable";
+      params.AsyncAmd = "true";
+      params.AsyncAmdStatusCallback = amdUrl.toString();
+      params.AsyncAmdStatusCallbackMethod = "POST";
+      params.MachineDetectionSpeechThreshold = String(
+        input.voicemail.machineDetectionSpeechThresholdMs,
+      );
+      params.MachineDetectionSpeechEndThreshold = String(
+        input.voicemail.machineDetectionSpeechEndThresholdMs,
+      );
+      params.MachineDetectionSilenceTimeout = String(
+        input.voicemail.machineDetectionSilenceTimeoutMs,
+      );
+      params.MachineDetectionTimeout = String(input.voicemail.machineDetectionTimeoutMs / 1000);
+    }
+
     if (input.inlineTwiml) {
       params.Twiml = input.inlineTwiml;
       console.log(
@@ -590,6 +636,12 @@ export class TwilioProvider implements VoiceCallProvider {
       providerCallId: result.sid,
       status: result.status === "queued" ? "queued" : "initiated",
     };
+  }
+
+  async playMessageAndHangup(input: PlayTtsInput): Promise<void> {
+    await this.apiRequest(`/Calls/${input.providerCallId}.json`, {
+      Twiml: `<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="${escapeXml(input.voice || "alice")}">${escapeXml(input.text)}</Say><Hangup/></Response>`,
+    });
   }
 
   async hangupCall(input: HangupCallInput): Promise<void> {

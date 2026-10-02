@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Command } from "commander";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
@@ -8,6 +9,7 @@ import {
   isRecord,
   normalizeOptionalLowercaseString,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { CallBriefSchema, type CallBrief } from "./call-brief.js";
 import { registerVoiceCallLogs } from "./cli-call-log.js";
 import { parseCliInteger, writeCliJson, writeCliLine } from "./cli-command-io.js";
 import {
@@ -47,6 +49,29 @@ type SetupStatus = {
   ok: boolean;
   checks: SetupCheck[];
 };
+
+async function readCliBrief(options: {
+  brief?: string;
+  briefFile?: string;
+}): Promise<CallBrief | undefined> {
+  if (options.brief && options.briefFile) {
+    throw new Error("Use either --brief or --brief-file");
+  }
+  const raw = options.briefFile
+    ? await readFile(resolveUserPath(options.briefFile), "utf8")
+    : options.brief;
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (raw.length > 16000) {
+    throw new Error("Brief input is too large");
+  }
+  const value =
+    options.briefFile || raw.trimStart().startsWith("{") || raw.trimStart().startsWith("[")
+      ? JSON.parse(raw)
+      : { task: raw };
+  return CallBriefSchema.parse(value);
+}
 
 function resolveMode(input: string): "off" | "serve" | "funnel" {
   const raw = normalizeOptionalLowercaseString(input) ?? "";
@@ -237,17 +262,28 @@ export function registerVoiceCallCli(params: {
       "Call mode: notify (hangup after message) or conversation (stay open)",
       "conversation",
     )
-    .action(async (options: { message: string; to?: string; mode?: string }) => {
-      const callId = await initiateVoiceCall({
-        ensureRuntime,
-        config,
-        method: "voicecall.initiate",
-        to: options.to,
-        message: options.message,
-        mode: options.mode,
-      });
-      writeCliJson({ callId });
-    });
+    .option("--brief <text-or-json>", "Per-call task or structured JSON brief")
+    .option("--brief-file <path>", "Read a structured JSON brief from a file")
+    .action(
+      async (options: {
+        message: string;
+        to?: string;
+        mode?: string;
+        brief?: string;
+        briefFile?: string;
+      }) => {
+        const callId = await initiateVoiceCall({
+          ensureRuntime,
+          config,
+          method: "voicecall.initiate",
+          brief: await readCliBrief(options),
+          to: options.to,
+          message: options.message,
+          mode: options.mode,
+        });
+        writeCliJson({ callId });
+      },
+    );
 
   root
     .command("start")
@@ -259,17 +295,28 @@ export function registerVoiceCallCli(params: {
       "Call mode: notify (hangup after message) or conversation (stay open)",
       "conversation",
     )
-    .action(async (options: { to: string; message?: string; mode?: string }) => {
-      const callId = await initiateVoiceCall({
-        ensureRuntime,
-        config,
-        method: "voicecall.start",
-        to: options.to,
-        message: options.message,
-        mode: options.mode,
-      });
-      writeCliJson({ callId });
-    });
+    .option("--brief <text-or-json>", "Per-call task or structured JSON brief")
+    .option("--brief-file <path>", "Read a structured JSON brief from a file")
+    .action(
+      async (options: {
+        to: string;
+        message?: string;
+        mode?: string;
+        brief?: string;
+        briefFile?: string;
+      }) => {
+        const callId = await initiateVoiceCall({
+          ensureRuntime,
+          config,
+          method: "voicecall.start",
+          brief: await readCliBrief(options),
+          to: options.to,
+          message: options.message,
+          mode: options.mode,
+        });
+        writeCliJson({ callId });
+      },
+    );
 
   root
     .command("continue")
@@ -319,6 +366,27 @@ export function registerVoiceCallCli(params: {
         managerFallback: (manager) => manager.speak(options.callId, options.message),
         failureLabel: "speak",
       });
+    });
+
+  root
+    .command("steer")
+    .description("Steer an active realtime call through its owning Gateway")
+    .requiredOption("--call-id <id>", "Call ID")
+    .requiredOption("--message <text>", "Owner instruction")
+    .option("--mode <mode>", "guidance or say", "guidance")
+    .action(async (options: { callId: string; message: string; mode: string }) => {
+      if (options.mode !== "say" && options.mode !== "guidance") {
+        throw new Error("mode must be say or guidance");
+      }
+      const gateway = await callVoiceCallGateway("voicecall.steer", {
+        callId: options.callId,
+        message: options.message,
+        mode: options.mode,
+      });
+      if (!gateway.ok) {
+        throw new Error("Steering requires the running Gateway that owns the active call");
+      }
+      writeCliJson(gateway.payload);
     });
 
   root
