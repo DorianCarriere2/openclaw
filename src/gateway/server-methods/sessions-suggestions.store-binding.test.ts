@@ -2,7 +2,7 @@ import { realpathSync, symlinkSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { upsertSessionEntryCore } from "../../config/sessions/session-accessor.js";
 import { resolveSqliteTargetFromSessionStorePath } from "../../config/sessions/session-sqlite-target.js";
-import { listSessionSuggestions } from "../../config/sessions/session-suggestion-store.js";
+import { listSessionSuggestions } from "../../config/sessions/session-suggestion-store.read.js";
 import {
   closeOpenClawAgentDatabaseByPathAsync,
   openOpenClawAgentDatabase,
@@ -90,6 +90,21 @@ describe("session suggestion store binding", () => {
           { suggestion: { sessionKey: key, agentId, state: "pending" } },
         ]);
         const id = responseSuggestionId(added);
+        const listed = await call(
+          "session.suggestions.list",
+          { sessionKey: key, agentId },
+          requester,
+          requestContext,
+        );
+        expect(listed.responses).toEqual([
+          [
+            true,
+            {
+              role: incognito ? "admin" : "owner",
+              suggestions: [expect.objectContaining({ id, sessionKey: key, agentId })],
+            },
+          ],
+        ]);
         await withReadySessionRows(
           requireSessionRowProjection(requestContext),
           () => [{ key, agentId }],
@@ -133,7 +148,7 @@ describe("session suggestion store binding", () => {
             }),
           }),
         );
-        expect(listSessionSuggestions(scope)).toEqual([
+        expect(await listSessionSuggestions(scope)).toEqual([
           expect.objectContaining({ id, state: "accepted" }),
         ]);
       });
