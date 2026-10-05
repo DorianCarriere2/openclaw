@@ -39,8 +39,10 @@ line follows the finished reply without elapsed time. A successful
 `sessions_yield` leaves no marker in the transcript, and its private
 continuation context stays hidden.
 
-When the turn resumes, its answer continues in that same block, with one footer
-at the end. The working indicator and the closing **Done in…** line then
+When the last subagent finishes, the wait line ends and the block stays as it
+is, without a working indicator, until the turn resumes. Its answer then
+continues in that same block, with one footer at the end. The working indicator
+and the closing **Done in…** line then
 describe the whole request: time since you asked, including the wait, and
 output tokens from the runs in that block. The token count is left out when the
 pane did not see all of those runs, for example after a reload during the wait.
@@ -787,8 +789,9 @@ visible results, so a page opened after an inline widget appears after that widg
 Failed tool results after the last answer stay visible outside
 the disclosure until a later answer follows them. This is display grouping, not a
 change to stored history. Live turns, search results, and turns without an answer
-stay expanded. So does an answer that follows a `sessions_yield` handoff in its
-turn: its activity stays in place and the closing line reports the request. User messages,
+stay expanded. So does a turn that handed off with `sessions_yield`, whether it
+is waiting, has resumed, or never did: its activity stays in place, and once it
+resumes the closing line reports the request. User messages,
 forwarded inputs, and structural markers remain boundaries for grouping.
 Selecting the author's name on a reply's **Replying to** line scrolls to the
 original message and briefly highlights it, first opening its containing
