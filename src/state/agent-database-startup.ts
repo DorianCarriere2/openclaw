@@ -56,9 +56,9 @@ type Activation = {
 type PreparationPhase =
   | "inspection"
   | "activation"
+  | "readiness"
   | "open-wait"
   | "open"
-  | "readiness"
   | "migration-wait"
   | "migration"
   | "publication-wait"
@@ -403,6 +403,9 @@ class AgentDatabaseStartupAdmission {
               );
             }
           }
+          phase("readiness");
+          await racePromiseWithAbortSignal(activation.preparationReady, this.signal);
+          assertCurrent();
           await withSqliteReadOnlyWorkerScope(
             async () => {
               await assertNotDeleted();
@@ -424,9 +427,6 @@ class AgentDatabaseStartupAdmission {
                 } finally {
                   release?.();
                 }
-                phase("readiness");
-                await racePromiseWithAbortSignal(activation.preparationReady, this.signal);
-                assertCurrent();
                 phase("migration-wait");
                 const releaseMigration = await this.migrating.acquire({ signal: this.signal });
                 try {
