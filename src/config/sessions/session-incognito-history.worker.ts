@@ -40,7 +40,7 @@ import type { IncognitoHistoryOperations } from "./session-incognito-history-con
 import { readPendingInputHistoryInDatabase } from "./session-pending-input-history.kernel.js";
 import { readSessionTranscriptAccountingFromProjection } from "./session-transcript-accounting.js";
 import { readSessionTranscriptAnchorFactsInDatabase } from "./session-transcript-anchor-read.kernel.js";
-import { sessionTranscriptIndexNeedsReconcile } from "./session-transcript-index.js";
+import { isSessionTranscriptIndexStatusClean } from "./session-transcript-index-status.worker.js";
 import { readSessionTranscriptMaintenance } from "./session-transcript-maintenance-read.js";
 import { SessionTranscriptProjectionUnavailableError } from "./session-transcript-projection-error.js";
 import {
@@ -243,7 +243,7 @@ export function createIncognitoHistoryWorker(
             kind: "transcript-search",
             result: {
               ...result,
-              indexing: sessionTranscriptIndexNeedsReconcile(database.db, sessionId),
+              indexing: !isSessionTranscriptIndexStatusClean(database.db),
             },
           };
         });

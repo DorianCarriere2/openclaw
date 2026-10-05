@@ -52,6 +52,7 @@ import {
   appendPreparedProjectionChunk,
   claimPreparedSessionTranscriptProjection,
   finalizePreparedProjection,
+  readTranscriptIndexBacklog,
   runProjectionWrite,
   type ActivePreparedProjection,
   type ProjectionPublisher,
@@ -217,6 +218,7 @@ async function reconcilePreparedTranscriptIndexesPass(
     if (actorSource) {
       publication = actorSource.publication;
       sessionIds = actorSource.sessionIds;
+      pending = actorSource.pending;
       if (sessionIds.length === 0) {
         return { reconciledSessions: 0, pending, yielded: false };
       }
@@ -238,27 +240,9 @@ async function reconcilePreparedTranscriptIndexesPass(
       publication = {
         execute: (command) => client.execute(command, assertCurrent, { signal: operation.signal }),
       };
-      // Enumerate the admission backlog before scheduling, without waiting for a quiet revision.
-      let traversal: TranscriptProjectionPublicationOperations["preflight"]["output"]["traversal"];
-      while (true) {
-        assertCurrent();
-        const status = await drainTranscriptIndexStatus(async () => {
-          const receipt = await client.executeExisting(
-            { type: "preflight", input: undefined },
-            assertCurrent,
-            { signal: operation.signal },
-          );
-          return receipt?.value ?? { sessionIds: [], hasMore: false, traversalComplete: true };
-        }, traversal);
-        assertCurrent();
-        traversal = status.traversal;
-        if (!status.hasMore || status.traversalComplete) {
-          sessionIds = status.sessionIds;
-          pending = status.hasMore;
-          break;
-        }
-        await yieldToGateway();
-      }
+      const status = await readTranscriptIndexBacklog(client, assertCurrent, operation.signal);
+      sessionIds = status.sessionIds;
+      pending = status.hasMore;
       if (sessionIds.length === 0) {
         return { reconciledSessions: 0, pending, yielded: false };
       }
@@ -337,7 +321,8 @@ async function reconcilePreparedTranscriptIndexesPass(
               // A later preflight still detects and removes derived orphan rows.
               if (actorSource) {
                 if (!operation.signal.aborted) {
-                  await actorSource.sweep?.();
+                  const sweepPending = await actorSource.sweep?.();
+                  pending ||= sweepPending ?? false;
                 }
               } else if (publicationClient) {
                 if (!operation.signal.aborted) {
@@ -617,7 +602,7 @@ function startPreparedSessionTranscriptIndexReconcile(params: PreparedReconcileP
       if (!entered) {
         await execution?.release();
       }
-      return err(error);
+      return err<SessionTranscriptReconcileResult, unknown>(error);
     },
   );
   // A handoff may join a successor; queued callers wait native settlement, not that public join.

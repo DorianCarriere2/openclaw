@@ -566,7 +566,8 @@ it("reads committed actor writes in FIFO order and retains the hydration snapsho
             snippet: "committed before history",
           },
         ],
-        indexing: false,
+        // A FIFO read does not certify global projection maintenance.
+        indexing: true,
       },
     });
     expect(searched.result).not.toHaveProperty("found");

@@ -63,9 +63,36 @@ export type ActivePreparedProjection = {
   claimId: number;
   plan: PreparedSessionTranscriptProjectionMetadata;
 };
+type ProjectionStatus = TranscriptProjectionPublicationOperations["preflight"]["output"];
 type ProjectionRows = Parameters<
   typeof appendPreparedSessionTranscriptProjectionChunkInTransaction
 >[1];
+/** Enumerate the admission backlog without waiting for a quiet revision. */
+export async function readTranscriptIndexBacklog(
+  client: OpenClawAgentSqliteWorkerStore<TranscriptProjectionPublicationOperations>,
+  assertCurrent: () => void,
+  signal: AbortSignal,
+): Promise<ProjectionStatus> {
+  let traversal: ProjectionStatus["traversal"];
+  while (true) {
+    assertCurrent();
+    const status = await drainTranscriptIndexStatus<ProjectionStatus>(async () => {
+      const receipt = await client.executeExisting(
+        { type: "preflight", input: undefined },
+        assertCurrent,
+        { signal },
+      );
+      return receipt?.value ?? { sessionIds: [], hasMore: false, traversalComplete: true };
+    }, traversal);
+    assertCurrent();
+    traversal = status.traversal;
+    if (!status.hasMore || status.traversalComplete) {
+      return status;
+    }
+    await yieldToGateway();
+  }
+}
+
 export async function runProjectionWrite<T>(
   databaseOptions: ReconcileDatabaseOptions,
   operationLabel: Extract<SqliteSessionWriteOperation, `sessions.transcript-index.${string}`>,

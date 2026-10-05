@@ -2,7 +2,10 @@ import type { UsageCostWorkerHostEffects } from "../../infra/session-cost-usage-
 import type { SqliteWorkerCommand } from "../../infra/sqlite-worker-contract.js";
 import type { RegisteredAgentWorkerOperations } from "../../state/openclaw-agent-execution-operations.js";
 import type { IncognitoHistoryTarget } from "./session-incognito-history-contract.js";
-import type { TranscriptProjectionRebuildOperations } from "./session-transcript-projection-publication.worker.js";
+import type {
+  TranscriptProjectionPublicationOperations,
+  TranscriptProjectionRebuildOperations,
+} from "./session-transcript-projection-publication.worker.js";
 import type { MemoryTranscriptProjectionFrame } from "./session-transcript-reconcile-memory.js";
 
 export type IncognitoUsageCacheOperations = Pick<
@@ -89,9 +92,14 @@ export type IncognitoStoreComputeOperations = {
   };
   "session.compute.store.preflight": {
     input: Record<never, never>;
-    output: IncognitoComputeInstance[];
+    output: TranscriptProjectionPublicationOperations["preflight"]["output"] & {
+      targets: IncognitoComputeInstance[];
+    };
   };
-  "session.compute.store.sweep": { input: Record<never, never>; output: null };
+  "session.compute.store.sweep": {
+    input: Record<never, never>;
+    output: TranscriptProjectionPublicationOperations["sweep"]["output"];
+  };
 };
 export type IncognitoComputeOperations = SessionComputeOperations & IncognitoStoreComputeOperations;
 

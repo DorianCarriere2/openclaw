@@ -471,7 +471,7 @@ describe("incognito transcript reconciliation", () => {
     expectNoDiskState();
   }, 20_000);
 
-  it.for([false, true])(
+  it.each([false, true])(
     "hands a successor's scheduled work over after successful old-owner settlement (canceled distinct request=%s)",
     async (cancelDistinctRequest) => {
       const { scope, options } = target(ambient.env);

@@ -4,6 +4,7 @@ import { resolveOpenClawAgentSqlitePath } from "../../state/openclaw-agent-db.pa
 import type { IncognitoSessionActor } from "./session-incognito-actor.js";
 import type { IncognitoComputeTarget } from "./session-incognito-compute-contract.js";
 import type { IncognitoSessionAuthority } from "./session-incognito-contract.js";
+import { drainTranscriptIndexStatus } from "./session-transcript-index-maintenance.js";
 import type { TranscriptProjectionRebuildOperations } from "./session-transcript-projection-publication.worker.js";
 import type { ProjectionPublisher } from "./session-transcript-projection-writer.js";
 import type { MemoryTranscriptProjectionFrame } from "./session-transcript-reconcile-memory.js";
@@ -15,9 +16,10 @@ export type IncognitoProjectionBinding = {
 };
 export type IncognitoProjectionSource = {
   sessionIds: string[];
+  pending: boolean;
   publication: ProjectionPublisher;
   read(sessionId: string): Promise<MemoryTranscriptProjectionFrame>;
-  sweep?(): Promise<void>;
+  sweep?(): Promise<boolean>;
 };
 
 /** Retain compute custody while individual frames and publications take their own FIFO turn. */
@@ -35,9 +37,11 @@ export function withIncognitoProjection<T>(
     throw new Error("Incognito reconciliation belongs to another actor");
   }
   return actor.sessions.withCompute(authority, target, async (compute) => {
-    const targets = target
-      ? [target]
-      : await compute.execute({ type: "session.compute.store.preflight", input: {} });
+    const { targets, hasMore } = target
+      ? { targets: [target], hasMore: false }
+      : await drainTranscriptIndexStatus(() =>
+          compute.execute({ type: "session.compute.store.preflight", input: {} }),
+        );
     const preferred = database.preferredSessionId;
     targets.sort(
       (left, right) => Number(right.sessionId === preferred) - Number(left.sessionId === preferred),
@@ -86,6 +90,7 @@ export function withIncognitoProjection<T>(
     };
     return operation({
       sessionIds: [...sources.keys()],
+      pending: hasMore,
       publication,
       read: (sessionId) =>
         compute.execute({ type: "session.compute.source.read", input: sourceFor(sessionId) }),
@@ -93,7 +98,10 @@ export function withIncognitoProjection<T>(
         ? {}
         : {
             async sweep() {
-              await compute.execute({ type: "session.compute.store.sweep", input: {} });
+              const swept = await drainTranscriptIndexStatus(() =>
+                compute.execute({ type: "session.compute.store.sweep", input: {} }),
+              );
+              return swept.hasMore || swept.sessionIds.length > 0;
             },
           }),
     });

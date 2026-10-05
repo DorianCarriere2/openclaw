@@ -4,10 +4,10 @@ import type { TranscriptProjectionPublicationOperations } from "./session-transc
 type ProjectionStatus = TranscriptProjectionPublicationOperations["preflight"]["output"];
 
 /** Bound one pass even when foreign commits keep restarting admission. */
-export async function drainTranscriptIndexStatus(
-  maintain: () => Promise<ProjectionStatus>,
+export async function drainTranscriptIndexStatus<Status extends ProjectionStatus>(
+  maintain: () => Promise<Status>,
   previousTraversal?: ProjectionStatus["traversal"],
-): Promise<ProjectionStatus> {
+): Promise<Status> {
   let traversal = previousTraversal;
   for (let batch = 0; ; batch++) {
     const result = await maintain();

@@ -25,11 +25,8 @@ import {
   type IncognitoComputeTarget,
   type IncognitoUsageCacheOperations,
 } from "./session-incognito-compute-contract.js";
-import {
-  deleteOrphanedTranscriptIndexRowsInTransaction,
-  listSessionsNeedingTranscriptIndexReconcile,
-  sessionTranscriptIndexNeedsReconcile,
-} from "./session-transcript-index.js";
+import { maintainSessionTranscriptIndexStatus } from "./session-transcript-index-status.worker.js";
+import { sessionTranscriptIndexNeedsReconcile } from "./session-transcript-index.js";
 import type { TranscriptProjectionRebuildOperations } from "./session-transcript-projection-publication.worker.js";
 import { deletePreparedSessionTranscriptProjectionChunkInTransaction } from "./session-transcript-projection-rebuild.js";
 import {
@@ -148,12 +145,15 @@ export function createIncognitoComputeWorker(
           "sessions.transcript-index.preflight",
           "Incognito store projection",
           () => {
-            deleteOrphanedTranscriptIndexRowsInTransaction(database.db);
-            const pending = new Set(listSessionsNeedingTranscriptIndexReconcile(database.db));
+            const status = maintainSessionTranscriptIndexStatus(database.db);
+            const pending = new Set(status.sessionIds);
             admit("commit", keys);
             return command.type === "session.compute.store.sweep"
-              ? null
-              : inventory(true).filter((entry) => pending.has(entry.sessionId));
+              ? status
+              : {
+                  ...status,
+                  targets: instances.filter((entry) => pending.has(entry.sessionId)),
+                };
           },
         );
       case "session.compute.store.refreshLock":
