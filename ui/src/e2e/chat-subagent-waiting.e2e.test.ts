@@ -109,6 +109,21 @@ suite.define(() => {
           session: runningChild,
           ancestorSessions: [delegatingParent],
         });
+        // While the parent still works, its own line counts the running subagents.
+        await indicator
+          .locator(".chat-working-indicator__subagents")
+          .getByText("1 subagent running", { exact: true })
+          .waitFor();
+        expect(await indicator.textContent()).not.toContain("Waiting on");
+        // Measure the phone layout itself, not the frame before the shell collapses.
+        await page.setViewportSize({ width: 390, height: 900 });
+        await page.locator(".shell--mobile-nav").waitFor();
+        await indicator.locator(".chat-working-indicator__subagents").waitFor();
+        expect(
+          await indicator.evaluate((element) => element.scrollWidth <= element.clientWidth),
+        ).toBe(true);
+        await page.setViewportSize({ width: 1280, height: 900 });
+        await page.locator(".shell:not(.shell--mobile-nav)").waitFor();
         const yieldCall = {
           role: "assistant",
           content: [
@@ -186,6 +201,8 @@ suite.define(() => {
         );
         expect(await indicator.locator("openclaw-elapsed-time").count()).toBe(1);
         expect(await indicator.textContent()).not.toContain("output tokens");
+        // The wait says who is left itself; the running count never joins it.
+        expect(await indicator.locator(".chat-working-indicator__subagents").count()).toBe(0);
         // The wait is the handed-off turn's own status: no marker, no second assistant row.
         expect(
           await activePane

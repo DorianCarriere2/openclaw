@@ -26,15 +26,23 @@ A tool stops showing **Running** when its completion arrives, even while the
 parent turn continues. If that completion does not establish success or failure,
 the row shows **Outcome unknown**. Partial output alone does not finish a tool.
 
+While a turn is still working and has subagents running, its working indicator
+ends with their count, such as **3 subagents running**, and counts down as they
+finish.
+
 When a turn hands off with `sessions_yield` and its subagents are still active,
 the working indicator stays under that reply and reads **Waiting on 3
 subagents**, counting down as they finish. When one is left it shows that
 subagent's name, which opens its session. Elapsed time counts from the handoff.
 If the turn ended without a handoff while subagents are still active, the same
-line follows the finished reply without elapsed time. Until the pane has loaded
-every child session, the line reads **Waiting on subagents**. A successful
+line follows the finished reply without elapsed time. A successful
 `sessions_yield` leaves no marker in the transcript, and its private
 continuation context stays hidden.
+
+Counts and names come from the session's subagent list. Until the pane has
+loaded it, the working indicator shows no count and a wait reads **Waiting on
+subagents**. The pane does not load that list when
+[Swarm is turned off](/tools/swarm) with `tools.swarm: false`.
 
 When your role or session policy blocks messages, the composer is disabled and
 shows the reason before you try to send. This includes sandbox requirements,

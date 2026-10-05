@@ -1,7 +1,11 @@
 import { render } from "lit";
 import { describe, expect, it, vi } from "vitest";
 import type { GatewaySessionRow } from "../../api/types.ts";
-import { resolveChatSubagentWait, type ChatSubagentWait } from "./chat-subagent-wait.ts";
+import {
+  countRunningSubagents,
+  resolveChatSubagentWait,
+  type ChatSubagentWait,
+} from "./chat-subagent-wait.ts";
 import { renderChatWorkingIndicator } from "./components/chat-working-indicator.ts";
 
 const parent: GatewaySessionRow = {
@@ -164,6 +168,47 @@ describe("chat waiting on subagents", () => {
         messages: history,
       }),
     ).toEqual({ startedAt: null, runningCount: 0 });
+  });
+
+  it("counts unfinished children beside the session's own work once the roster has loaded", () => {
+    const working = { ...parent, hasActiveRun: true };
+    const roster = [child, { ...child, key: "agent:main:subagent:other" }];
+    const count = (input: Partial<Parameters<typeof countRunningSubagents>[0]> = {}) =>
+      countRunningSubagents({
+        selectedSession: working,
+        subagentSessions: roster,
+        subagentSessionsHydrated: true,
+        ...input,
+      });
+    expect(count()).toBe(2);
+    expect(count({ subagentSessions: [{ ...child, hasActiveRun: false }] })).toBe(0);
+    expect(count({ subagentSessionsHydrated: false })).toBe(0);
+    expect(count({ selectedSession: { ...working, hasActiveSubagentRun: false } })).toBe(0);
+    expect(count({ selectedSession: undefined })).toBe(0);
+  });
+
+  it("ends the working line with the running count and leaves the wait line to its own wording", () => {
+    const container = document.createElement("div");
+    const draw = (options: Parameters<typeof renderChatWorkingIndicator>[1]) =>
+      render(
+        renderChatWorkingIndicator(
+          { kind: "reading-indicator", key: "parent-working", startedAt: 1_000 },
+          options,
+        ),
+        container,
+      );
+    const suffix = () =>
+      container.querySelector(".chat-working-indicator__subagents")?.textContent?.trim();
+    draw({ runningSubagents: 3, outputTokens: 431 });
+    expect(suffix()).toBe("3 subagents running");
+    expect(container.textContent).toContain("431 output tokens");
+    draw({ runningSubagents: 1 });
+    expect(suffix()).toBe("1 subagent running");
+    draw({ runningSubagents: 0 });
+    expect(suffix()).toBeUndefined();
+    draw({ runningSubagents: 2, waitingSubagents: { startedAt: 2_000, runningCount: 2 } });
+    expect(suffix()).toBeUndefined();
+    expect(container.textContent).toContain("Waiting on 2 subagents");
   });
 
   it("renders the wait without parent output usage or rotating phrases and navigates the child", () => {

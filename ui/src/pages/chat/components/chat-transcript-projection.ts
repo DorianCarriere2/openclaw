@@ -10,9 +10,10 @@ import { chatItemGroups } from "../chat-agent-run-grouping.ts";
 import { messageRecoveryKey } from "../chat-message-recovery.ts";
 import { resolveTurnRecap, type TurnRecap } from "../chat-progress.ts";
 import {
+  countRunningSubagents,
   placedSubagentWait,
   resolveChatSubagentWait,
-  subagentWaitRenderKey,
+  subagentStatusRenderKey,
 } from "../chat-subagent-wait.ts";
 import {
   assistantGroupCanOwnActiveRunStatus,
@@ -110,6 +111,7 @@ export function projectChatTranscript(
   pruneTranscriptExpansions(expandedAssistantMessages, props);
   const subagentWait = resolveChatSubagentWait(props);
   const placedWait = searchFiltering ? undefined : placedSubagentWait(subagentWait);
+  const runningSubagents = countRunningSubagents(props);
   const chatItemsInput = {
     paneId: props.paneId,
     sessionKey: props.sessionKey,
@@ -302,6 +304,7 @@ export function projectChatTranscript(
     startupLabel: props.startupLabel,
     waitingApproval: props.waitingApproval,
     waitingSubagents: subagentWait ?? undefined,
+    runningSubagents,
     onOpenSession: props.onOpenSession,
     runOutputTokens,
     questionPrompts,
@@ -376,9 +379,10 @@ export function projectChatTranscript(
       searchResult: searchFiltering,
     } satisfies Parameters<typeof renderMessageGroup>[1];
   };
-  // Only the working indicator shows live usage and the subagent wait, so rows
+  // Only the working indicator shows live usage and subagent status, so rows
   // without one keep memoizing across usage and child-roster patches.
-  const workingUsageKey = JSON.stringify([runOutputTokens, subagentWaitRenderKey(subagentWait)]);
+  const subagentsKey = subagentStatusRenderKey(subagentWait, runningSubagents);
+  const workingUsageKey = JSON.stringify([runOutputTokens, subagentsKey]);
   const liveStatusSignature = (item: ChatRenderItem): string => {
     if (item.kind === "agent-run-frame") {
       const hasWorkingIndicator = item.parts.some(

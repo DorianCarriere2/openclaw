@@ -75,6 +75,7 @@ export type StreamGroupOptions = StreamMessageOptions & {
   startupLabel?: string;
   waitingApproval?: boolean;
   waitingSubagents?: ChatSubagentWait;
+  runningSubagents?: number;
   onOpenSession?: (key: string) => void;
   runOutputTokens?: number | null;
   questionPrompts?: ReadonlyMap<string, QuestionPrompt>;
@@ -122,6 +123,7 @@ export function renderStreamGroupPart(
       workingPhrases: opts.branding?.workingPhrases,
       waitingApproval: opts.waitingApproval === true,
       waitingSubagents: part.waitingOn === "subagents" ? opts.waitingSubagents : undefined,
+      runningSubagents: opts.runningSubagents,
       onOpenSession: opts.onOpenSession,
       startupLabel: opts.startupLabel,
       outputTokens: opts.runOutputTokens,
