@@ -49,6 +49,7 @@ import { captureSessionEntryWorkerRequest } from "./session-entry-read-request.j
 import type {
   SessionEntryWorkerRead,
   PreparedSessionEntryWorkerRead,
+  SessionStoreWorkerReadInput,
   SessionStoreWorkerReadScope,
   SessionEntryReadSourcePreparation,
 } from "./session-entry-read-runtime.types.js";
@@ -538,11 +539,7 @@ type SessionStoreWorkerReader = Pick<
 };
 
 export async function withSessionStoreReaderInWorker<T>(
-  input: Omit<SessionStoreWorkerReadScope, "agentId"> & {
-    agentId?: string;
-    defaultAgentId?: string;
-    projection?: SessionEntryWorkerRead["projection"] | SessionEntryReadScope["projection"];
-  },
+  input: SessionStoreWorkerReadInput,
   read: (source: SessionStoreWorkerReader) => Promise<T>,
   {
     backing = false,
