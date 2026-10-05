@@ -38,7 +38,10 @@ import { isIncognitoEntryCreationCommand } from "./session-incognito-entry-creat
 import { createIncognitoEntryCreationWorker } from "./session-incognito-entry-creation.worker.js";
 import { isIncognitoEntryPatchCommand } from "./session-incognito-entry-patch-contract.js";
 import { createIncognitoEntryPatchWorker } from "./session-incognito-entry-patch.worker.js";
-import { isIncognitoHistoryCommand } from "./session-incognito-history-contract.js";
+import {
+  incognitoHistoryKeys,
+  isIncognitoHistoryCommand,
+} from "./session-incognito-history-contract.js";
 import { createIncognitoHistoryWorker } from "./session-incognito-history.worker.js";
 import {
   incognitoLifecycleKeys,
@@ -82,6 +85,7 @@ export function createIncognitoSessionWorker(
   env: SqliteWorkerStateContext["environment"],
 ) {
   let revision = 0;
+  const sessionRevisions = new Map<string, number>();
   const read = (sessionKey: string): IncognitoSessionSnapshot => {
     const entry = readExactSessionEntryRow(database, sessionKey)?.entry;
     return {
@@ -90,7 +94,7 @@ export function createIncognitoSessionWorker(
         {
           identity,
           sessionKey,
-          revision,
+          revision: sessionRevisions.get(sessionKey) ?? 0,
           sharing: entry
             ? {
                 entry: projectSessionSharingEntry(entry),
@@ -125,6 +129,14 @@ export function createIncognitoSessionWorker(
         rollback() {},
         commit() {
           revision = nextRevision;
+          // Unrelated writes must not invalidate a retained session read.
+          for (const fact of facts) {
+            if (fact.sharing?.entry) {
+              sessionRevisions.set(fact.sessionKey, nextRevision);
+            } else {
+              sessionRevisions.delete(fact.sessionKey);
+            }
+          }
         },
       });
     }
@@ -360,9 +372,10 @@ export function createIncognitoSessionWorker(
         });
       }
       if (isIncognitoHistoryCommand(command)) {
-        assertKey(command.input.sessionKey);
+        const keys = incognitoHistoryKeys(command);
+        keys.forEach(assertKey);
         return readOnly(() => {
-          const facts = read(command.input.sessionKey).facts;
+          const facts = keys.flatMap((key) => read(key).facts);
           requestSqliteWorkerOperationAdmission({
             stage: "prepare",
             facts: { identity, sessions: facts },
@@ -467,6 +480,7 @@ export function createIncognitoSessionWorker(
       outbox.assertSettled();
     },
     close() {
+      sessionRevisions.clear();
       manager.close();
       compute.close();
       sideData.close();

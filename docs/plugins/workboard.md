@@ -117,7 +117,7 @@ advance the event sequence without invalidating unchanged cards.
 Use a Sessions board to see where your conversations stand without creating
 cards. By default, it includes sessions from all configured agents with activity
 in the last 72 hours and excludes archived sessions, automation (cron) sessions,
-system sessions, and each agent's home session. Subagent sessions remain included.
+system sessions, dock conversations, and each agent's home session. Subagent sessions remain included.
 Set `scope.includeAutomation: true` to include automation and system sessions, or
 `scope.includeHome: true` to include home sessions. The Board agent can set these
 options. Existing boards use the same defaults without a migration. Each session appears in
@@ -129,6 +129,8 @@ Tiles link up to four pull requests, ordered by open, draft, merged,
 then closed state, with a count for any additional pull requests. The agent filter
 narrows the displayed sessions without changing the
 saved board scope.
+
+Dock conversations stay excluded even when automation is included.
 
 **People filter:** Choose **Everyone** (the default), **Involving me**, or a person
 beside the agent filter. Involving me shows sessions you own or previously prompted;
@@ -173,9 +175,12 @@ column is removed, the board applies its rules again. Tile tooltips distinguish
 
 Facts update live from session changes, with automatic board rereads at most once
 every five seconds. Category-only session updates and card-only changes do not
-reload Sessions boards. Reads share a prepared placement snapshot when their
-board, authorized roster, people view, and session revision match. Each request
-still obtains its own caller-scoped roster; sharing never expands session visibility.
+reload Sessions boards. Reads share one frozen snapshot for the board, people
+view, session revision, and Gateway-authorized read scope. Repeated Control UI
+reads check current authority without rebuilding the session roster. Session,
+profile, topology, or access changes retire the shared scope; age-window and
+unavailable-PR retry deadlines still refresh the snapshot. Tool callers obtain
+their own caller-scoped roster; sharing never expands session visibility.
 `workboard.sessionsBoard.read` returns a `revision`; repeat the same query with
 `{ sinceRevision: revision }` for `{ unchanged: true, revision }` when current.
 Reconnects and view changes request a full snapshot. The Workboard change event's
@@ -201,9 +206,18 @@ retains the last known facts.
 
 When the Control UI host supports a session dock, **Board agent** opens a
 conversation beside the board. Its first use creates and saves a dedicated
-conversation named **Sessions board · &lt;board name&gt;**. The Board agent is the
-only model used by the board, invoked on demand to change columns, rules, scope,
-or pins using these tools:
+conversation named **Sessions board · &lt;board name&gt;**. This is a dock conversation:
+it stays out of session lists, Involving me views, and people counts. Open it from
+the **Board agent** button. Its human creator, sharing, and sandbox rules are the
+same as an ordinary conversation.
+
+For boards with an older Board agent conversation, the next **Board agent** use
+creates a new dock conversation and saves its reference. The old conversation
+keeps its history and remains an ordinary session that you can archive; its
+creation surface and provenance are not rewritten.
+
+The Board agent is the only model used by the board, invoked on demand to change
+columns, rules, scope, or pins using these tools:
 
 | Tool                              | Arguments and behavior                                                                                                        |
 | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
