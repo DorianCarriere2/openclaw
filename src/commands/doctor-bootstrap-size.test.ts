@@ -27,7 +27,8 @@ vi.mock("../agents/bootstrap-files-diagnostics.js", () => ({
   resolveBootstrapContextForDiagnostics,
 }));
 
-vi.mock("../agents/embedded-agent-helpers.js", () => ({
+vi.mock("../agents/embedded-agent-helpers.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../agents/embedded-agent-helpers.js")>()),
   resolveBootstrapMaxChars,
   resolveBootstrapTotalMaxChars,
   resolveUserBootstrapMaxChars,
