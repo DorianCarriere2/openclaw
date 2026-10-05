@@ -32,6 +32,90 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+it.each([
+  { mode: "steer", revoked: false },
+  { mode: "followup", revoked: false },
+  { mode: "followup", revoked: true },
+] as const)(
+  "preserves prepared Talk input for released adapters ($mode, revoked: $revoked)",
+  async ({ mode, revoked }) => {
+    const sessionId = "legacy-talk-session";
+    const sessionKey = "agent:main:legacy-talk";
+    let current = true;
+    let context: string | undefined;
+    const createRecorder = vi.fn((text: string) =>
+      createUserTurnTranscriptRecorder({ input: { text }, target: () => undefined }),
+    );
+    const enqueue = vi.fn(
+      async (
+        queuedSessionId: string,
+        _text: string,
+        _options: Parameters<typeof queueEmbeddedAgentMessageWithOutcomeAsync>[2],
+        canInject: () => boolean,
+      ) => {
+        expect(canInject()).toBe(true);
+        return {
+          queued: true as const,
+          sessionId: queuedSessionId,
+          target: "embedded_run" as const,
+          gatewayHealth: "live" as const,
+        };
+      },
+    );
+    const result = await controlRealtimeVoiceAgentRun(
+      {
+        sessionKey,
+        runTarget: {
+          runId: "legacy-talk-run",
+          signal: new AbortController().signal,
+          isCurrent: () => current,
+        },
+        mode,
+        text: "also check the migration",
+        getToolAuthorityOverlay: () => ({
+          senderIsOwner: true,
+          disableTools: false,
+          traceAuthorized: false,
+        }),
+        prepareToolAuthorityOverlay: async () => {
+          await Promise.resolve();
+          context = "prepared legacy Talk context";
+          current = !revoked;
+        },
+        getSteeringContext: () => context,
+        createUserTurnTranscriptRecorder: createRecorder,
+      },
+      {
+        ...realtimeVoiceControlRuntime,
+        resolveActiveEmbeddedRunOwnerByRunId: () => ({
+          runId: "legacy-talk-run",
+          sessionId,
+          sessionKey,
+          abort: () => true,
+        }),
+        queueGuardedEmbeddedAgentMessageWithOutcomeAsync: enqueue,
+      },
+    );
+    expect(result).toMatchObject({ queued: !revoked, ok: !revoked });
+    if (revoked) {
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(createRecorder).not.toHaveBeenCalled();
+    } else {
+      expect(enqueue).toHaveBeenCalledOnce();
+      const [, text, options] = enqueue.mock.calls[0]!;
+      expect(text).toContain("prepared legacy Talk context\n\nalso check the migration");
+      if (mode === "followup") {
+        expect(text).toContain("Spoken follow-up for the current voice call.");
+      }
+      expect(options?.userTurnTranscriptRecorder?.message).toMatchObject({
+        role: "user",
+        content: text,
+      });
+      expect(createRecorder).toHaveBeenCalledExactlyOnceWith(text);
+    }
+  },
+);
+
 it("requires a fresh target to use a replacement backend on the same operation", async () => {
   const operation = createTestReplyOperation({ originatingLeafEntryId: "leaf-a" });
   operation.setPhase("running");
@@ -154,35 +238,31 @@ it.each([
             )
           : surface === "embedded"
             ? queueEmbeddedAgentMessageWithOutcomeAsync(sessionId, text, options)
-            : controlRealtimeVoiceAgentRun(
-                {
-                  sessionKey,
-                  runTarget: {
-                    runId: target.runId!,
-                    signal: operation.abortSignal,
-                    isCurrent: () =>
-                      realtimeVoiceControlRuntime.resolveActiveEmbeddedRunOwnerByRunId(
-                        target.runId!,
-                      )?.sessionId === sessionId,
-                  },
-                  mode: "steer",
-                  text,
-                  getToolAuthorityOverlay: () => overlay,
-                  prepareToolAuthorityOverlay: async (current) => {
-                    await operation.projectToolAuthorityFingerprintAsync(current);
-                    steeringContext = "prepared Talk context";
-                  },
-                  getSteeringContext: () => steeringContext,
-                  createUserTurnTranscriptRecorder: (preparedText) => {
-                    recordedTexts.push(preparedText);
-                    return createUserTurnTranscriptRecorder({
-                      input: { text: preparedText },
-                      target: () => undefined,
-                    });
-                  },
+            : controlRealtimeVoiceAgentRun({
+                sessionKey,
+                runTarget: {
+                  runId: target.runId!,
+                  signal: operation.abortSignal,
+                  isCurrent: () =>
+                    realtimeVoiceControlRuntime.resolveActiveEmbeddedRunOwnerByRunId(target.runId!)
+                      ?.sessionId === sessionId,
                 },
-                realtimeVoiceControlRuntime,
-              );
+                mode: "steer",
+                text,
+                getToolAuthorityOverlay: () => overlay,
+                prepareToolAuthorityOverlay: async (current) => {
+                  await operation.projectToolAuthorityFingerprintAsync(current);
+                  steeringContext = "prepared Talk context";
+                },
+                getSteeringContext: () => steeringContext,
+                createUserTurnTranscriptRecorder: (preparedText) => {
+                  recordedTexts.push(preparedText);
+                  return createUserTurnTranscriptRecorder({
+                    input: { text: preparedText },
+                    target: () => undefined,
+                  });
+                },
+              });
       pending.push(result);
       return result;
     };

@@ -173,6 +173,10 @@ the optional awaited queue companion described in
 [awaited reply tool authority](/plugins/sdk-migration/how-to-migrate#await-reply-tool-authority).
 Legacy external V2 injection backends retain fresh native policy checks; an earlier
 prepared fingerprint never replaces current authority.
+Supplied Talk control adapters retain fully rendered steering and follow-up input,
+including prepared context and the transcript recorder, even when they ignore
+optional preparation callbacks. The built-in runtime prepares that input inside
+its queue reservation to preserve ordering across awaited policy reads.
 Legacy V1 backends retain unbound run-owned input; caller-bound input still
 requires V2. Worker preparation does not change that distinction.
 Question claims and cancellation retain their existing synchronous contracts.

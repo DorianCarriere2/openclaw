@@ -193,8 +193,10 @@ export async function controlRealtimeVoiceAgentRun(
   if (!sessionId || (target === undefined && !isLegacyCurrent())) {
     return noActiveRun();
   }
+  // Released dependency adapters may ignore optional preparation callbacks.
+  const deferMessagePreparation = !providedDeps && Boolean(target || legacyOwner);
   const toolAuthorityOverlay = params.getToolAuthorityOverlay?.();
-  if (toolAuthorityOverlay && (mode === "cancel" || (!target && !legacyOwner))) {
+  if (toolAuthorityOverlay && (mode === "cancel" || !deferMessagePreparation)) {
     await params.prepareToolAuthorityOverlay?.(toolAuthorityOverlay);
   }
   const preparedOwner = resolveCurrentRun();
@@ -247,7 +249,7 @@ export async function controlRealtimeVoiceAgentRun(
     // a capable TUI run's model-facing task tools.
     taskSuggestionDeliveryMode: undefined,
   };
-  const steerText = target || legacyOwner ? text : prepareMessage();
+  const steerText = deferMessagePreparation ? text : prepareMessage();
   const prepareCurrent = async () => {
     const overlay = params.getToolAuthorityOverlay?.();
     if (overlay) {
@@ -283,10 +285,12 @@ export async function controlRealtimeVoiceAgentRun(
                 }
               },
               prepareCurrent,
-              prepareMessage: async () => {
-                await prepareCurrent();
-                return prepareMessage();
-              },
+              prepareMessage: deferMessagePreparation
+                ? async () => {
+                    await prepareCurrent();
+                    return prepareMessage();
+                  }
+                : undefined,
             }),
           )
         : {
