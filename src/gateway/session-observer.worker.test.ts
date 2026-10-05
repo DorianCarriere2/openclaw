@@ -47,6 +47,7 @@ async function withObserver(
     peer: DatabaseSync;
     replaceStore: () => Promise<void>;
     rewriteLifecycle: () => void;
+    rewriteLifecycleWithoutPublication: () => void;
     resetLifecycle: () => Promise<void>;
     closeDatabase: () => ReturnType<typeof closeOpenClawAgentDatabaseByPathAsync>;
     advanceClock: () => void;
@@ -104,6 +105,13 @@ async function withObserver(
             lifecycleRevision: "life-b",
             updatedAt: 2,
           });
+        },
+        rewriteLifecycleWithoutPublication: () => {
+          database.db
+            .prepare(
+              "UPDATE session_nodes SET entry_json = json_set(entry_json, '$.lifecycleRevision', 'life-b') WHERE session_key = ?",
+            )
+            .run(key);
         },
         resetLifecycle: async () => {
           await replaceSessionEntry(
@@ -185,29 +193,33 @@ it("moves observer admission, publication, terminal and companion reads off the 
   });
 });
 
-it.for(["rewrite", "close"] as const)(
+it.for(["rewrite", "native rewrite", "close"] as const)(
   "refuses a companion snapshot when its read owner changes before consumption (%s)",
   async (change) => {
-    await withObserver(async ({ observer, rewriteLifecycle, closeDatabase }) => {
-      await observer.handleEventAsync(
-        event({ stream: "item", data: { kind: "preamble", progressText: "Previous lifecycle" } }),
-      );
-      let closing: ReturnType<typeof closeOpenClawAgentDatabaseByPathAsync> | undefined;
-      interceptNextEntryRead(() => {
-        if (change === "rewrite") {
-          rewriteLifecycle();
-        } else {
-          closing = closeDatabase();
-        }
-      });
-      try {
-        await expect(observer.getCompanionSnapshotAsync(key, "main")).rejects.toThrow(
-          /changed|revoked|closed|current|admission/i,
+    await withObserver(
+      async ({ observer, rewriteLifecycle, rewriteLifecycleWithoutPublication, closeDatabase }) => {
+        await observer.handleEventAsync(
+          event({ stream: "item", data: { kind: "preamble", progressText: "Previous lifecycle" } }),
         );
-      } finally {
-        await closing;
-      }
-    });
+        let closing: ReturnType<typeof closeOpenClawAgentDatabaseByPathAsync> | undefined;
+        interceptNextEntryRead(() => {
+          if (change === "rewrite") {
+            rewriteLifecycle();
+          } else if (change === "native rewrite") {
+            rewriteLifecycleWithoutPublication();
+          } else {
+            closing = closeDatabase();
+          }
+        });
+        try {
+          await expect(observer.getCompanionSnapshotAsync(key, "main")).rejects.toThrow(
+            /changed|revoked|closed|current|admission/i,
+          );
+        } finally {
+          await closing;
+        }
+      },
+    );
   },
 );
 

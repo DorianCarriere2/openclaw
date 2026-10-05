@@ -4,16 +4,14 @@ import { sessionChanges } from "../../sessions/session-row-changes.js";
 import { getOpenClawAgentDatabaseIfOpen } from "../../state/openclaw-agent-db.js";
 import { runOpenClawAgentWriteAdmissions } from "../../state/openclaw-agent-write-admission.js";
 import type { CanonicalSessionReaderContinuation } from "./session-canonical-key.js";
+import { captureSessionEntryWorkerRequest } from "./session-entry-read-request.js";
 import type {
   PreparedSessionEntryWorkerRead,
   SessionEntryWorkerRead,
 } from "./session-entry-read-runtime.types.js";
 import { resolveUnsuffixedSqliteTargetFromSessionStorePath } from "./session-sqlite-target-paths.js";
 import { captureSessionStoreReadCandidate } from "./session-store-read-candidates.js";
-import type {
-  SessionExactEntriesWorkerSelection,
-  SessionHistoryWorkerDatabase,
-} from "./session-transcript-worker.types.js";
+import type { SessionHistoryWorkerDatabase } from "./session-transcript-worker.types.js";
 
 type ReadSessionStore = <T>(
   input: SessionEntryWorkerRead,
@@ -29,7 +27,7 @@ type ReadSessionStore = <T>(
 export async function withOrderedSessionEntriesInWorker<T>(
   inputs: readonly SessionEntryWorkerRead[],
   consume: (reads: readonly PreparedSessionEntryWorkerRead[]) => T,
-  readStore: ReadSessionStore,
+  { readStore, onReadAdmitted }: { readStore: ReadSessionStore; onReadAdmitted?: () => void },
 ): Promise<T> {
   const selected: Array<{
     input: SessionEntryWorkerRead;
@@ -53,7 +51,8 @@ export async function withOrderedSessionEntriesInWorker<T>(
     return runOpenClawAgentWriteAdmissions(
       selected.map(({ database }) => database),
       async () => {
-        const nativeReads = selected.map(({ database }) => {
+        // Synchronous SDK writers bypass the FIFO and may not publish row changes.
+        const nativeSources = selected.map(({ database }) => {
           const native = getOpenClawAgentDatabaseIfOpen(database);
           return {
             database,
@@ -108,8 +107,7 @@ export async function withOrderedSessionEntriesInWorker<T>(
           for (const read of selected) {
             read.assertCurrent();
           }
-          // Synchronous writers bypass FIFO admission and may not publish a row change.
-          for (const { database, native, revision } of nativeReads) {
+          for (const { database, native, revision } of nativeSources) {
             if (
               getOpenClawAgentDatabaseIfOpen(database) !== native ||
               (native &&
@@ -125,21 +123,13 @@ export async function withOrderedSessionEntriesInWorker<T>(
           }
         };
         try {
+          assertCurrent();
+          onReadAdmitted?.();
           const reads: PreparedSessionEntryWorkerRead[] = [];
           for (const { input: selectedInput, owner, database, continuation } of selected) {
             assertCurrent();
-            const selection: SessionExactEntriesWorkerSelection = selectedInput.selection
-              ? { selection: selectedInput.selection, projection: selectedInput.projection }
-              : {
-                  sessionKeys: [...new Set(selectedInput.sessionKeys)],
-                  projection: selectedInput.projection,
-                };
             const result = await owner.readExactEntries({
-              ...selection,
-              lifecycleSessionKey: selectedInput.lifecycleSessionKey,
-              includeMembers: selectedInput.includeMembers,
-              includeParticipantRecords: selectedInput.includeParticipantRecords,
-              includeAuthorization: selectedInput.includeAuthorization,
+              ...captureSessionEntryWorkerRequest(selectedInput),
               env: database.env,
               continuation,
             });
@@ -157,6 +147,7 @@ export async function withOrderedSessionEntriesInWorker<T>(
           unsubscribe();
         }
       },
+      true,
     );
   };
   return enter(0);

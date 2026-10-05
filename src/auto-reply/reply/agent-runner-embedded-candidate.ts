@@ -186,6 +186,7 @@ export async function runEmbeddedFallbackCandidate(
         toolAuthorityFingerprint: turn.replyOperation?.toolAuthorityFingerprint,
         enableHeartbeatTool: turn.opts?.enableHeartbeatTool,
         forceHeartbeatTool: turn.opts?.forceHeartbeatTool,
+        continuesConversation: turn.opts?.continuesConversation,
         bootstrapContextMode: turn.opts?.bootstrapContextMode,
         bootstrapContextRunKind: params.bootstrapContextRunKind,
         images: params.currentTurnImages.images,
@@ -207,7 +208,7 @@ export async function runEmbeddedFallbackCandidate(
           if (info?.lifecycleGeneration) {
             params.onLifecycleGeneration(info.lifecycleGeneration);
           }
-          if (agentHarnessPolicy.runtime !== "openclaw") {
+          if (agentHarnessPolicy.runtime !== "openclaw" || info?.backend === "cloud-worker") {
             await params.prepareAgentRunStart();
           }
         },

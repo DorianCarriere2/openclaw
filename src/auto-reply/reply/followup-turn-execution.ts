@@ -11,6 +11,7 @@ import {
 import type { SessionEntry } from "../../config/sessions/types.js";
 import { logVerbose } from "../../globals.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { withCurrentUserTurnInput } from "../../sessions/user-turn-transcript-runtime-context.js";
 import { isFastModeAutoProgressPayload } from "../reply-payload.js";
 import type { TemplateContext } from "../templating.js";
 import type { VerboseLevel } from "../thinking.js";
@@ -98,7 +99,7 @@ export async function executeFollowupTurn(params: {
       cfg: turn.config,
     });
   turn.queued.run.terminalReplyExpectation = terminalReplyExpectation;
-  // Heartbeats can refresh a drain callback but never enter its queue.
+  // Queued turns are never heartbeats; heartbeat runs never supply the drain callback.
   const isHeartbeat = false;
   const roomEvent = turn.queued.currentInboundEventKind === "room_event";
   const progressAllowed = () => turn.sendPolicy === "allow" && !roomEvent;
@@ -205,7 +206,7 @@ export async function executeFollowupTurn(params: {
                     )?.entry;
                     return progressAllowed() && currentVerboseLevel({ entry }) !== "off";
                   },
-                  (_input, consume) => consume(source),
+                  { readStore: (_input, consume) => consume(source) },
                 );
               },
               { backing: true, logical: { assertCurrent } },
@@ -292,11 +293,17 @@ export async function executeFollowupTurn(params: {
   const progressOpts: InternalGetReplyOptions = {
     ...sourceOpts,
     isHeartbeat,
-    // Queue callbacks are refreshed per session, but authority belongs to the
-    // queued turn. Never let a later callback widen or narrow an older item.
+    // Queue callbacks are refreshed per session, but authority, cancellation, and
+    // run observers belong to the queued turn. Never borrow them from another runner.
     operatorAuthority: turn.queued.operatorAuthority,
+    abortSignal: turn.operation.abortSignal,
     toolsAllow: turn.queued.toolsAllow,
     disableTools: turn.queued.disableTools,
+    onAgentRunStart: turn.queued.runObservers?.onAgentRunStart,
+    onAgentRunTerminalOutcome: turn.queued.runObservers?.onAgentRunTerminalOutcome,
+    onModelSelected: turn.queued.runObservers?.onModelSelected,
+    prepareAssistantTranscriptMessage: turn.queued.runObservers?.prepareAssistantTranscriptMessage,
+    resolveReplyDelivery: turn.queued.runObservers?.resolveReplyDelivery,
     commentaryPayloadsEnabled,
     runId: turn.runId,
     onBlockReply: undefined,
@@ -487,9 +494,7 @@ export async function executeFollowupTurn(params: {
         replyRunRegistry.bindSourceTurnId(turn.operation, sourceTurnId);
         setChannelSourceTurnId(sessionCtx, sourceTurnId);
       }
-      execution = await (recorder?.withPendingInput
-        ? recorder.withPendingInput(execute)
-        : execute());
+      execution = await withCurrentUserTurnInput(recorder, execute);
     } catch (error) {
       await drainPendingWork();
       if (!hasReplyOperationExecutionStarted(turn.operation)) {

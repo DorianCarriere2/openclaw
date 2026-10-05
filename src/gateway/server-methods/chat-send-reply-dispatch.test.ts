@@ -10,7 +10,6 @@ import { buildAssistantMessage, buildUsageWithNoCost } from "../../agents/stream
 import {
   copyReplyPayloadMetadata,
   setReplyPayloadMetadata,
-  type ReplyPayload,
 } from "../../auto-reply/reply-payload.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
 import type { ReplyDispatchOperation } from "../../auto-reply/reply/reply-dispatcher.types.js";
@@ -36,20 +35,18 @@ import { openOpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { projectChatDisplayMessage } from "../chat-display-projection.js";
 import * as sessionTranscriptReaders from "../session-transcript-readers.js";
+import * as sessionStoreReaders from "../session-utils-store-worker.js";
 import { loadSessionEntry } from "../session-utils.js";
 import {
-  buildAssistantReplyContent,
   buildAssistantReplyContentFromInputs,
   extractAssistantDisplayText,
 } from "./chat-assistant-content.js";
 import {
+  buildTranscriptReplyTextFromInputs,
   readChatSendReplyPayload,
   selectChatSendFinalReplyInputs,
 } from "./chat-send-command-replies.js";
-import {
-  buildTranscriptReplyTextFromInputs,
-  createChatSendReplyDispatch,
-} from "./chat-send-reply-dispatch.js";
+import { createChatSendReplyDispatch } from "./chat-send-reply-dispatch.js";
 
 async function createReplyTranscriptFixture(sessionKey = "agent:main:receipt") {
   const runId = "receipt-run";
@@ -120,10 +117,6 @@ async function createReplyTranscriptFixture(sessionKey = "agent:main:receipt") {
   };
 }
 
-function buildRawTranscriptReplyText(payloads: ReplyPayload[]): string {
-  return buildTranscriptReplyTextFromInputs(payloads.map((payload) => ({ kind: "raw", payload })));
-}
-
 function createReplyDispatchSession(clientRunId: string) {
   return {
     agentId: "main",
@@ -149,61 +142,6 @@ function createReplyDispatch(
     ...overrides,
   });
 }
-
-describe("buildTranscriptReplyTextFromInputs", () => {
-  it.each([
-    ...["NO_REPLY", "ANNOUNCE_SKIP", "REPLY_SKIP"].map((controlText) => ({
-      name: `suppressed ${controlText}`,
-      payloads: [{ text: "First instruction" }, { text: controlText }, { text: "Done" }],
-      expected: "First instruction\n\nDone",
-      project: true,
-    })),
-    {
-      name: "split fenced-code indentation",
-      payloads: [
-        { text: "Here is the YAML:\n\n```yaml\nroot:\n" },
-        { text: "  nested:\n    value: true\n```" },
-      ],
-      expected: "Here is the YAML:\n\n```yaml\nroot:\n  nested:\n    value: true\n```",
-      project: false,
-    },
-    {
-      name: "CRLF boundaries and whitespace-only chunks",
-      payloads: [
-        { text: "```yaml\r\nroot:\r\n" },
-        { text: "  \t\n" },
-        { text: "  nested: true\r\n```" },
-      ],
-      expected: "```yaml\r\nroot:\r\n  nested: true\r\n```",
-      project: false,
-    },
-    {
-      name: "reply directives and safe media without reasoning",
-      payloads: [
-        { text: "hidden", isReasoning: true },
-        { text: "Hello", replyToId: "message-1", mediaUrls: ["https://example.test/photo.png"] },
-        { text: "Listen", audioAsVoice: true, mediaUrl: "https://example.test/clip.mp3" },
-        { text: "private", sensitiveMedia: true, mediaUrl: "https://example.test/private.png" },
-      ],
-      expected: [
-        "[[reply_to:message-1]]\nHello\nAttachment: https://example.test/photo.png",
-        "Listen\nAttachment: https://example.test/clip.mp3\n[[audio_as_voice]]",
-        "private",
-      ].join("\n\n"),
-      project: false,
-    },
-  ])("preserves $name in transcript reply text", async ({ payloads, expected, project }) => {
-    expect(buildRawTranscriptReplyText(payloads)).toBe(expected);
-    if (project) {
-      const { assistantContent } = await buildAssistantReplyContent({
-        sessionKey: "agent:main:main",
-        agentId: "main",
-        payloads,
-      });
-      expect(assistantContent).toEqual([{ type: "text", text: expected }]);
-    }
-  });
-});
 
 describe("chat delivery watermark preparation", () => {
   it("consumes the committed manager boundary without caller transcript SQL", async () => {
@@ -963,6 +901,58 @@ describe("createChatSendReplyDispatch", () => {
           expect(await dispatch.resolveReplyDelivery()).toBe(
             change === "input-rewrite" ? "delivered" : "missing",
           );
+        },
+      );
+    });
+  });
+
+  it("rechecks transcript anchors after the final session lookup yields", async () => {
+    await withOpenClawTestState({ label: "webchat-receipt-final-lookup" }, async () => {
+      const { dispatch, append, inputId } = await createReplyTranscriptFixture();
+      await dispatch.runAgentMediaTranscript(
+        { run: async (operation) => operation() },
+        async () => {
+          dispatch.captureAgentTranscriptStart();
+          await append("answer", { role: "assistant", content: "Committed answer." });
+          const readMessage = sessionTranscriptReaders.readSessionMessageByIdAsync;
+          const readWatermark = sessionTranscriptReaders.readSessionTranscriptWatermarkAsync;
+          const readSession = sessionStoreReaders.loadGatewaySessionEntryReadOnlyInWorker;
+          let answerRead = false;
+          let finalWatermarkRead = false;
+          let branchChanged = false;
+          const selectedRead = vi
+            .spyOn(sessionTranscriptReaders, "readSessionMessageByIdAsync")
+            .mockImplementation(async (...args) => {
+              const result = await readMessage(...args);
+              answerRead = true;
+              return result;
+            });
+          const watermarkRead = vi
+            .spyOn(sessionTranscriptReaders, "readSessionTranscriptWatermarkAsync")
+            .mockImplementation(async (...args) => {
+              const result = await readWatermark(...args);
+              finalWatermarkRead = answerRead;
+              return result;
+            });
+          const sessionRead = vi
+            .spyOn(sessionStoreReaders, "loadGatewaySessionEntryReadOnlyInWorker")
+            .mockImplementation(async (...args) => {
+              const result = await readSession(...args);
+              if (finalWatermarkRead && !branchChanged) {
+                branchChanged = true;
+                await append("other-branch", { role: "assistant", content: "NO_REPLY" }, inputId);
+              }
+              return result;
+            });
+          try {
+            const delivery = await dispatch.resolveReplyDelivery();
+            expect(branchChanged).toBe(true);
+            expect(delivery).toBe("missing");
+          } finally {
+            sessionRead.mockRestore();
+            watermarkRead.mockRestore();
+            selectedRead.mockRestore();
+          }
         },
       );
     });
