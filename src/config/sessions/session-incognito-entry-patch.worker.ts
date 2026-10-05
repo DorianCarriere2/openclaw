@@ -53,6 +53,7 @@ export function createIncognitoEntryPatchWorker(
               options: {
                 consumePendingReset: input.consumePendingReset,
                 providerReviewMutation: input.providerReviewMutation,
+                workerGuard: { cliHistory: input.cliHistory },
                 assertCommitAllowed() {
                   const refusedSource = readRefusedSessionSource(
                     database,

@@ -700,7 +700,7 @@ Public creation and generic entry patches consume P7h1's captured actor binding.
 Creation prepares on that actor, then rechecks the authoritative entry and label
 inside its synchronous transaction. Transcript initialization and owner assignment
 commit together. Entry patches reuse the existing selection, CAS, predicate, and
-mutation kernels.
+mutation kernels, including CLI-history admission and transcript-watermark checks.
 
 Prepared source authority stays retained through settlement. Same-actor source
 predicates run inside the worker transaction; native-only and foreign-store

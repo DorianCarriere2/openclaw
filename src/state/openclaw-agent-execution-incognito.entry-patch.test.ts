@@ -135,6 +135,56 @@ it("rejects a prepared patch when another actor write rewrites its entry", async
   ).toBe("winner");
 });
 
+it.each([false, true])(
+  "revalidates CLI history before adopting its writer (changed=%s)",
+  async (changed) => {
+    const sessionId = `cli-history-${changed}`;
+    const scope = await create(sessionId);
+    const append = async (text: string) => {
+      const result = await actor.sessions.transcript(authority, {
+        type: "session.message.append",
+        input: {
+          sessionKey: scope.sessionKey,
+          sessionId,
+          fence: {},
+          message: { role: "user", content: text, timestamp: 100 },
+        },
+      });
+      assert(result.ok && result.value.append);
+    };
+    await append("Prepared CLI history");
+    const { watermark } = await actor.sessions.history(authority, {
+      type: "session.history.watermark",
+      input: { sessionKey: scope.sessionKey, sessionId },
+    });
+    if (changed) {
+      await append("History changed while CLI planning yielded");
+    }
+    let published = false;
+    const patch = withIncognitoSessionActor(actor, () =>
+      patchSessionEntryCore(scope, () => ({ activeWriterRunId: "synthetic-cli-writer" }), {
+        workerGuard: { cliHistory: { sessionId, watermark } },
+        onCommitted() {
+          published = true;
+        },
+      }),
+    );
+    if (changed) {
+      await expect(patch).rejects.toThrow("CLI history changed before preparation");
+    } else {
+      await expect(patch).resolves.toMatchObject({ activeWriterRunId: "synthetic-cli-writer" });
+    }
+    expect(published).toBe(!changed);
+    const persisted = (await actor.sessions.read(authority, { sessionKey: scope.sessionKey }))
+      .entry;
+    if (changed) {
+      expect(persisted).not.toHaveProperty("activeWriterRunId");
+    } else {
+      expect(persisted).toMatchObject({ activeWriterRunId: "synthetic-cli-writer" });
+    }
+  },
+);
+
 it.each(["host", "SQL"] as const)(
   "settles a false %s predicate before CAS after awaiting a winning actor rewrite",
   async (predicate) => {
