@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { awaitGateBeforeSettlement, createDeferred } from "../../../test/helpers/promise.js";
 import { createAdmittedRunOperatorAuthority } from "../../agents/admitted-run-context.js";
 import { normalizeProviderModelRef } from "../../agents/embedded-agent-runner/model.registry-resolution.js";
 import { FailoverError } from "../../agents/failover-error.js";
@@ -10,7 +11,9 @@ import * as metadata from "../../plugins/current-plugin-metadata-snapshot.js";
 import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 import { bindReplyFallbackSteeringRoute } from "./agent-runner-fallback-authority.js";
 import { runReplyAgent } from "./agent-runner-run.js";
+import * as followupRunner from "./followup-runner.js";
 import { createPersonalToolScreenDispatcher } from "./personal-tool-turn.test-support.js";
+import { getFollowupQueueDepth, type FollowupRun } from "./queue.js";
 import { createQueueTestRun } from "./queue.test-helpers.js";
 import { clearFollowupDrainCallback } from "./queue/drain.js";
 import { clearFollowupQueue } from "./queue/state.js";
@@ -19,12 +22,129 @@ import {
   type ReplyOperationRunState,
 } from "./reply-operation-run-state.js";
 import { createReplyOperation } from "./reply-run-registry.js";
+import * as toolAuthority from "./reply-tool-authority.js";
 import { prepareReplyToolAuthority } from "./reply-tool-authority.js";
 import { createMockTypingController } from "./test-helpers.js";
 
 afterEach(() => vi.restoreAllMocks());
 
 describe("ordinary steering into automatic model fallback", () => {
+  it.each([
+    { read: 1, revoked: false, aborted: false },
+    { read: 2, revoked: false, aborted: false },
+    { read: 1, revoked: true, aborted: false },
+    { read: 2, revoked: true, aborted: false },
+    { read: 1, revoked: false, aborted: true },
+  ])(
+    "preserves input after target termination during read $read (caller revoked: $revoked, target aborted: $aborted)",
+    async ({ read, revoked, aborted }) => {
+      const key = `agent:main:completed-steering-${read}-${revoked}-${aborted}`;
+      const run = createQueueTestRun({ prompt: "preserve this incoming turn", messageId: key });
+      run.run.agentId = "main";
+      run.run.sessionKey = key;
+      let callerCurrent = true;
+      run.operatorAuthority = createAdmittedRunOperatorAuthority({
+        profileId: "incoming-user",
+        scopes: ["operator.read", "operator.write"],
+        gatewayAccessGrant: null,
+        modelPolicy: prepareOperatorModelPolicy({ cfg: run.run.config, policy: {} }),
+        assertCurrent() {
+          if (!callerCurrent) {
+            throw new Error("incoming caller revoked");
+          }
+        },
+      });
+      const operation = createReplyOperation({
+        sessionKey: key,
+        sessionId: run.run.sessionId,
+        resetTriggered: false,
+      });
+      operation.bindToolAuthoritySnapshot(prepareReplyToolAuthority(run));
+      operation.bindToolAuthorityRoute(run.run);
+      const injected = vi.fn(async () => {});
+      operation.attachBackend({
+        kind: "embedded",
+        cancel() {},
+        messageInjectionV2: { version: 2, isAvailable: () => true, queueMessage: injected },
+      });
+      operation.setPhase("running");
+      const entered = createDeferred();
+      const resume = createDeferred();
+      const delivered = createDeferred<FollowupRun>();
+      const consumeFollowup = vi.fn(async (queued: FollowupRun) => {
+        delivered.resolve(queued);
+      });
+      vi.spyOn(followupRunner, "createFollowupRunner").mockReturnValue(consumeFollowup);
+      const fingerprint = toolAuthority.resolveFollowupRunToolAuthorityFingerprintAsync;
+      let reads = 0;
+      vi.spyOn(toolAuthority, "resolveFollowupRunToolAuthorityFingerprintAsync").mockImplementation(
+        async (...args) => {
+          const result = await fingerprint(...args);
+          if (++reads === read) {
+            entered.resolve();
+            await resume.promise;
+          }
+          return result;
+        },
+      );
+      const resultState: ReplyOperationRunState = {};
+      const typing = createMockTypingController();
+      const incoming = runReplyAgent({
+        commandBody: run.prompt,
+        followupRun: run,
+        opts: { runId: key, [REPLY_OPERATION_RUN_STATE]: resultState },
+        queueKey: key,
+        resolvedQueue: { mode: "steer", debounceMs: 0 },
+        shouldSteer: true,
+        shouldFollowup: false,
+        isActive: true,
+        typing,
+        sessionCtx: {},
+        sessionKey: key,
+        defaultModel: "gpt-test",
+        resolvedVerboseLevel: "off",
+        isNewSession: false,
+        blockStreamingEnabled: false,
+        resolvedBlockStreamingBreak: "text_end",
+        shouldInjectGroupIntro: false,
+        typingMode: "never",
+      });
+      try {
+        await awaitGateBeforeSettlement(entered.promise, incoming, "Fingerprint read was not held");
+        if (aborted) {
+          expect(operation.abortByUser()).toBe(true);
+        } else {
+          operation.complete();
+        }
+        callerCurrent = !revoked;
+        resume.resolve();
+        if (revoked) {
+          await expect(incoming).rejects.toThrow("incoming caller revoked");
+          expect(consumeFollowup).not.toHaveBeenCalled();
+          expect(resultState.admission).toBeUndefined();
+        } else {
+          await expect(incoming).resolves.toBeUndefined();
+          if (aborted) {
+            expect(consumeFollowup).not.toHaveBeenCalled();
+            operation.complete();
+          }
+          expect(await delivered.promise).toBe(run);
+          expect(resultState.admission).toEqual({ status: "accepted", mode: "followup" });
+          expect(consumeFollowup).toHaveBeenCalledExactlyOnceWith(run);
+        }
+        expect(injected).not.toHaveBeenCalled();
+        expect(getFollowupQueueDepth(key)).toBe(0);
+        expect(typing.cleanup).toHaveBeenCalledOnce();
+      } finally {
+        resume.resolve();
+        await incoming.catch(() => {});
+        clearFollowupQueue(key);
+        clearFollowupDrainCallback(key);
+        operation.complete();
+      }
+    },
+  );
+
   it.each([
     "automatic",
     "cross-profile",

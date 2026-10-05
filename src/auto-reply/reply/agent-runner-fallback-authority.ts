@@ -23,11 +23,18 @@ export async function resolveReplySteeringAuthority(
     ? await resolveFollowupRunToolAuthorityFingerprintAsync(followupRun, activeRoute, assertCurrent)
     : undefined;
   assertCurrent();
+  if (operation?.result || operation?.abortSignal.aborted) {
+    // Losing the target returns valid incoming input to follow-up custody.
+    return {
+      toolAuthorityFingerprint: incomingFingerprint,
+      automaticFallbackRoute: undefined,
+      pendingInputAuthorityFingerprint: undefined,
+      shouldQueueAuthorityMismatch: true,
+    };
+  }
   if (
     operation &&
-    (operation.result ||
-      operation.abortSignal.aborted ||
-      operation.toolAuthorityRoute !== activeRoute ||
+    (operation.toolAuthorityRoute !== activeRoute ||
       operation.toolAuthorityFingerprint !== activeFingerprint)
   ) {
     throw new Error("Reply steering authority changed during preparation");
