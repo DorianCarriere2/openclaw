@@ -15,47 +15,62 @@ import { createReplyRestartRecoveryClaimController } from "./restart-recovery-cl
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 describe("restart recovery claim successors", () => {
-  it("transfers an aborted Control UI claim to a queued successor", async () => {
-    const scope = {
-      storePath: path.join(tempDirs.make("openclaw-reply-claim-successor-"), "sessions.json"),
-      sessionKey: "agent:main:main",
-    };
-    let entry: InternalSessionEntry = {
-      abortedLastRun: true,
-      restartRecoveryDeliveryRequestFingerprint: "request-fingerprint",
-      restartRecoveryDeliveryRunId: "interrupted-run",
-      restartRecoveryDeliverySourceRunId: "interrupted-run",
-      restartRecoverySourceIngress: "control-ui",
-      sessionId: "session",
-      status: "interrupted",
-      updatedAt: 1,
-    };
-    await replaceSessionEntry(scope, entry);
-    const controller = createReplyRestartRecoveryClaimController({
-      agentId: "main",
-      admissionRunId: "queued-run",
-      lifecycleGeneration: getAgentEventLifecycleGeneration(),
-      getEntry: () => entry,
-      getSessionId: () => entry.sessionId,
-      isRestartAbort: () => false,
-      resolveDeliveryContext: () => undefined,
-      setEntry: (next) => {
-        entry = next;
-      },
-      ...scope,
-    });
+  it.each([
+    { outcome: "unsettled", status: undefined, transfers: true },
+    { outcome: "interrupted", status: "interrupted", transfers: true },
+    { outcome: "killed", status: "killed", transfers: false },
+    { outcome: "failed", status: "failed", transfers: false },
+  ] as const)(
+    "handles an aborted $outcome Control UI claim (transfers: $transfers)",
+    async ({ status, transfers }) => {
+      const scope = {
+        storePath: path.join(tempDirs.make("openclaw-reply-claim-successor-"), "sessions.json"),
+        sessionKey: "agent:main:main",
+      };
+      let entry: InternalSessionEntry = {
+        abortedLastRun: true,
+        restartRecoveryDeliveryRequestFingerprint: "request-fingerprint",
+        restartRecoveryDeliveryRunId: "interrupted-run",
+        restartRecoveryDeliverySourceRunId: "interrupted-run",
+        restartRecoverySourceIngress: "control-ui",
+        sessionId: "session",
+        status,
+        updatedAt: 1,
+      };
+      await replaceSessionEntry(scope, entry);
+      const before = loadSessionEntry(scope);
+      const controller = createReplyRestartRecoveryClaimController({
+        agentId: "main",
+        admissionRunId: "queued-run",
+        lifecycleGeneration: getAgentEventLifecycleGeneration(),
+        getEntry: () => entry,
+        getSessionId: () => entry.sessionId,
+        isRestartAbort: () => false,
+        resolveDeliveryContext: () => undefined,
+        setEntry: (next) => {
+          entry = next;
+        },
+        ...scope,
+      });
 
-    await expect(controller.admitUserTurn()).resolves.toBe("admitted");
+      if (!transfers) {
+        const failure = await controller.admitUserTurn().catch((error: unknown) => error);
+        expect(isRestartRecoveryClaimChangedError(failure)).toBe(true);
+        expect(loadSessionEntry(scope)).toEqual(before);
+        return;
+      }
+      await expect(controller.admitUserTurn()).resolves.toBe("admitted");
 
-    expect(loadSessionEntry(scope)).toMatchObject({
-      abortedLastRun: false,
-      restartRecoveryDeliveryRunId: "queued-run",
-      restartRecoveryDeliverySourceRunId: "queued-run",
-      restartRecoverySourceIngress: "control-ui",
-      restartRecoveryTerminalRunIds: ["interrupted-run"],
-    });
-    expect(loadSessionEntry(scope)?.status).toBeUndefined();
-  });
+      expect(loadSessionEntry(scope)).toMatchObject({
+        abortedLastRun: false,
+        restartRecoveryDeliveryRunId: "queued-run",
+        restartRecoveryDeliverySourceRunId: "queued-run",
+        restartRecoverySourceIngress: "control-ui",
+        restartRecoveryTerminalRunIds: ["interrupted-run"],
+      });
+      expect(loadSessionEntry(scope)?.status).toBeUndefined();
+    },
+  );
 
   it("rejects a successor when its recovery transfer loses ownership", async () => {
     const scope = {
