@@ -3,6 +3,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { observeHostDataSql } from "../../../test/helpers/sqlite-statement-execution-counter.js";
 import type { GatewayRequestContext } from "../../gateway/server-methods/types.js";
+import { createGatewayRequestContext } from "../../gateway/server-request-context.js";
+import { makeContextParams } from "../../gateway/server-request-context.test-support.js";
 import { resolveSessionMutationAuthorizationAsync } from "../../gateway/session-sharing-authorization-async.js";
 import {
   roleClient,
@@ -103,43 +105,97 @@ describe("accepted input worker custody", () => {
   });
 
   it("appends and finishes pending input through the native incognito owner", async () => {
-    const scope = {
-      agentId: "incognito-agent",
-      env: { OPENCLAW_STATE_DIR: path.resolve(fixture.sessionsDir(), "../../..") },
-      sessionId: "incognito-session",
-      sessionKey: "agent:incognito-agent:dashboard:incognito-pending-input",
-    };
-    await upsertSessionEntryCore(scope, {
-      incognito: true,
-      sessionId: scope.sessionId,
-      updatedAt: 1,
-    });
-    const message: PersistedUserTurnMessage = {
-      role: "user",
-      content: "Continue in memory",
-      timestamp: 100,
-      idempotencyKey: "incognito-native:user",
-    };
-    receipt = await stageSessionPendingInput(scope, {
-      runId: "incognito-native",
-      message,
-      assertCurrent: () => {},
-    });
-    if (!receipt) {
-      throw new Error("Expected incognito pending input custody");
-    }
+    await withOpenClawTestState({ scenario: "minimal" }, async ({ env }) => {
+      const scope = {
+        agentId: "incognito-agent",
+        env,
+        sessionId: "incognito-session",
+        sessionKey: "agent:incognito-agent:dashboard:incognito-pending-input",
+      };
+      await upsertSessionEntryCore(scope, {
+        incognito: true,
+        sessionId: scope.sessionId,
+        updatedAt: 1,
+      });
+      const cfg = {
+        ...rolePolicyConfig(),
+        agents: { entries: { "incognito-agent": {} } },
+      };
+      const client = roleClient("view", "incognito-custody");
+      client.connect.scopes = ["operator.admin"];
+      const profileId = client.authenticatedUserProfile?.profileId;
+      if (!profileId) {
+        throw new Error("Expected the incognito caller's profile");
+      }
+      const context = createGatewayRequestContext(makeContextParams());
+      context.getRuntimeConfig = () => cfg;
+      context.getCommittedRuntimeConfig = () => cfg;
+      const resolved = await resolveSessionMutationAuthorizationAsync({
+        client,
+        method: "chat.send",
+        requestParams: scope,
+        context,
+      });
+      expect(resolved.error).toBeNull();
+      const authorization = resolved.authorization;
+      if (!authorization) {
+        throw new Error("Expected incognito sharing authorization");
+      }
+      const message: PersistedUserTurnMessage = {
+        role: "user",
+        content: "Continue in memory",
+        timestamp: 100,
+        idempotencyKey: "incognito-native:user",
+      };
+      receipt = await stageSessionPendingInput(scope, {
+        runId: "incognito-native",
+        message,
+        assertCurrent: authorization.assertCurrent,
+        assertAdmittedCurrent: authorization.assertCurrent,
+        authority: authorization.admittedInputAuthority,
+      });
+      if (!receipt) {
+        throw new Error("Expected incognito pending input custody");
+      }
+      if (!receipt.runAsync) {
+        throw new Error("Expected current input dispatch");
+      }
 
-    expect(
-      receipt.run(() => appendTranscriptMessageSync(scope, { message: receipt!.message })),
-    ).toMatchObject({ ok: true, value: { appended: true } });
-    receipt.finish("cancelled");
-    await receipt.settled?.();
-    receipt = undefined;
+      try {
+        setUserProfileRole(profileId, "write");
+        let dispatched = 0;
+        await receipt.runAsync(() => {
+          dispatched++;
+        });
+        expect(dispatched).toBe(1);
+        client.connect.scopes = ["operator.read", "operator.write"];
+        await expect(
+          receipt.runAsync(() => {
+            dispatched++;
+          }),
+        ).rejects.toThrow("was not found");
+        expect(dispatched).toBe(1);
+        client.connect.scopes = ["operator.admin"];
 
-    expect(await loadTranscriptEvents(scope)).toContainEqual(
-      expect.objectContaining({ message: expect.objectContaining({ content: message.content }) }),
-    );
-    expect(await listSessionPendingInputs(scope)).toMatchObject({ items: [], total: 0 });
+        expect(
+          receipt.run(() => appendTranscriptMessageSync(scope, { message: receipt!.message })),
+        ).toMatchObject({ ok: true, value: { appended: true } });
+        receipt.finish("cancelled");
+        await receipt.settled?.();
+        receipt = undefined;
+
+        expect(await loadTranscriptEvents(scope)).toContainEqual(
+          expect.objectContaining({
+            message: expect.objectContaining({ content: message.content }),
+          }),
+        );
+        expect(await listSessionPendingInputs(scope)).toMatchObject({ items: [], total: 0 });
+      } finally {
+        receipt?.finish("interrupted");
+        await receipt?.settled?.();
+        receipt = undefined;
+      }
+    });
   });
 });
 

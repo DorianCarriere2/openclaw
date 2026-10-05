@@ -711,11 +711,14 @@ export function resolveSessionMutationAuthorization(request: SessionMutationAuth
           );
         },
       };
-      authorization.admittedInputAuthority = createSessionSharingInputAuthority(
-        params,
-        authorization,
-        () => consumingSharing!,
-      );
+      // Incognito custody keeps its native identity and live source guard until actor cutover.
+      if (!authorizedTargets.some((target) => isIncognitoSessionKey(target.sessionKey))) {
+        authorization.admittedInputAuthority = createSessionSharingInputAuthority(
+          params,
+          authorization,
+          () => consumingSharing!,
+        );
+      }
       return authorization;
     })(),
   };

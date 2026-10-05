@@ -369,6 +369,8 @@ export async function withSessionEntriesFromStoresInWorker<T>(
   consume: (reads: readonly PreparedSessionEntryWorkerRead[]) => T,
   options?: {
     ordered?: boolean;
+    /** Begin the row-publication fence after all preceding writer admissions settle. */
+    onOrderedReadStart?: () => void;
     prepareSource?: (
       input: SessionEntryWorkerRead,
       ...source: Parameters<SessionEntryReadSourcePreparation>
@@ -376,11 +378,11 @@ export async function withSessionEntriesFromStoresInWorker<T>(
   },
 ): Promise<T> {
   if (options?.ordered) {
-    return withOrderedSessionEntriesInWorker(inputs, consume, (input, read) =>
-      withSessionStoreReaderInWorker(input, read, {
-        prepareSource:
-          options.prepareSource && ((...source) => options.prepareSource!(input, ...source)),
-      }),
+    return withOrderedSessionEntriesInWorker(
+      inputs,
+      consume,
+      withSessionStoreReaderInWorker,
+      options,
     );
   }
   const reads: PreparedSessionEntryWorkerRead[] = [];

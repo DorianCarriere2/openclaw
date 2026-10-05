@@ -8,6 +8,7 @@ import { captureSessionEntryWorkerRequest } from "./session-entry-read-request.j
 import type {
   PreparedSessionEntryWorkerRead,
   SessionEntryWorkerRead,
+  SessionEntryReadSourcePreparation,
 } from "./session-entry-read-runtime.types.js";
 import { resolveUnsuffixedSqliteTargetFromSessionStorePath } from "./session-sqlite-target-paths.js";
 import { captureSessionStoreReadCandidate } from "./session-store-read-candidates.js";
@@ -21,6 +22,7 @@ type ReadSessionStore = <T>(
     continuation?: CanonicalSessionReaderContinuation;
     assertCurrent: () => void;
   }) => Promise<T>,
+  options?: { prepareSource?: SessionEntryReadSourcePreparation },
 ) => Promise<T>;
 
 /** Native effects retain existing writer FIFO order through their synchronous consumer. */
@@ -28,7 +30,15 @@ export async function withOrderedSessionEntriesInWorker<T>(
   inputs: readonly SessionEntryWorkerRead[],
   consume: (reads: readonly PreparedSessionEntryWorkerRead[]) => T,
   readStore: ReadSessionStore,
+  options: {
+    onOrderedReadStart?: () => void;
+    prepareSource?: (
+      input: SessionEntryWorkerRead,
+      ...source: Parameters<SessionEntryReadSourcePreparation>
+    ) => void;
+  } = {},
 ): Promise<T> {
+  const { onOrderedReadStart, prepareSource } = options;
   const selected: Array<{
     input: SessionEntryWorkerRead;
     owner: SessionHistoryWorkerDatabase;
@@ -39,14 +49,18 @@ export async function withOrderedSessionEntriesInWorker<T>(
   const enter = (index: number): Promise<T> => {
     const input = inputs[index];
     if (input) {
-      return readStore(input, async ({ reader, database, continuation, assertCurrent }) => {
-        selected.push({ input, owner: reader, database, continuation, assertCurrent });
-        try {
-          return await enter(index + 1);
-        } finally {
-          selected.pop();
-        }
-      });
+      return readStore(
+        input,
+        async ({ reader, database, continuation, assertCurrent }) => {
+          selected.push({ input, owner: reader, database, continuation, assertCurrent });
+          try {
+            return await enter(index + 1);
+          } finally {
+            selected.pop();
+          }
+        },
+        { prepareSource: prepareSource && ((...source) => prepareSource(input, ...source)) },
+      );
     }
     return runOpenClawAgentWriteAdmissions(
       selected.map(({ database }) => database),
@@ -123,6 +137,8 @@ export async function withOrderedSessionEntriesInWorker<T>(
           }
         };
         try {
+          assertCurrent();
+          onOrderedReadStart?.();
           const reads: PreparedSessionEntryWorkerRead[] = [];
           for (const { input: selectedInput, owner, database, continuation } of selected) {
             assertCurrent();

@@ -10,6 +10,7 @@ import { historyLane } from "../config/sessions/session-transcript-worker-resour
 import { readOpenClawAgentDatabaseIdentity } from "../state/openclaw-agent-db-identity.js";
 import { closeOpenClawAgentDatabasesAsync } from "../state/openclaw-agent-db-lifecycle.js";
 import { openOpenClawAgentDatabase } from "../state/openclaw-agent-db.js";
+import * as agentWriteAdmission from "../state/openclaw-agent-write-admission.js";
 import { setUserProfileRole } from "../state/user-profile-writes.worker.js";
 import { ensureProfileForEmail } from "../state/user-profiles.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
@@ -17,6 +18,8 @@ import type {
   GatewayRequestContext,
   SessionMutationAuthorization,
 } from "./server-methods/types.js";
+import { createGatewayRequestContext } from "./server-request-context.js";
+import { makeContextParams } from "./server-request-context.test-support.js";
 import { resolveSessionMutationAuthorizationAsync } from "./session-sharing-authorization-async.js";
 import { prepareSessionSharingSource } from "./session-sharing-source.js";
 import { roleClient, rolePolicyConfig, sharingPolicyClient } from "./session-sharing.test-utils.js";
@@ -227,6 +230,63 @@ it("allows unrelated config reloads while worker authorization reads are pending
       expect(effect).toHaveBeenCalledOnce();
     } finally {
       spy.mockRestore();
+    }
+  });
+});
+
+it("consumes sharing facts committed before the ordered read acquires its writer slot", async () => {
+  await withOpenClawTestState({ scenario: "minimal" }, async () => {
+    const cfg = rolePolicyConfig();
+    const client = roleClient("write", "queued-read-owner");
+    const profileId = client.authenticatedUserProfile?.profileId;
+    if (!profileId) {
+      throw new Error("Expected the sharing caller's profile");
+    }
+    const scope = { agentId: "main", sessionKey: "agent:main:queued-sharing-read" };
+    const entry = {
+      sessionId: "queued-sharing-session",
+      updatedAt: 1,
+      createdActor: {
+        type: "human" as const,
+        source: "profile" as const,
+        id: profileId,
+      },
+    };
+    replaceSessionEntrySync(scope, entry);
+    const context = createGatewayRequestContext(makeContextParams());
+    context.getRuntimeConfig = () => cfg;
+    context.getCommittedRuntimeConfig = () => cfg;
+    const result = await resolveSessionMutationAuthorizationAsync({
+      client,
+      method: "chat.send",
+      requestParams: scope,
+      context,
+    });
+    expect(result.error).toBeNull();
+    const authority = result.authorization?.admittedInputAuthority;
+    if (!authority) {
+      throw new Error("Expected prepared sharing custody");
+    }
+    const admit = agentWriteAdmission.runOpenClawAgentWriteAdmissions;
+    let updatedAt = entry.updatedAt;
+    const beforeRead = vi
+      .spyOn(agentWriteAdmission, "runOpenClawAgentWriteAdmissions")
+      .mockImplementation(async (...args) => {
+        await agentWriteAdmission.runOpenClawAgentWriteAdmission(scope, () => {
+          replaceSessionEntrySync(scope, { ...entry, updatedAt: ++updatedAt });
+        });
+        return admit(...args);
+      });
+    const consumed = vi.fn();
+    try {
+      await authority.withCurrent((facts) => {
+        expect(facts.entry?.updatedAt).toBe(updatedAt);
+        consumed();
+      });
+      expect(consumed).toHaveBeenCalledOnce();
+      expect(beforeRead).toHaveBeenCalledOnce();
+    } finally {
+      beforeRead.mockRestore();
     }
   });
 });

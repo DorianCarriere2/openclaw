@@ -449,6 +449,10 @@ export async function withGatewaySessionStoreTarget<T>(
             },
             {
               ordered: params.includeMembership,
+              onOrderedReadStart() {
+                // Commits ahead of the reader belong to its new snapshot, not a stale one.
+                changed = false;
+              },
               prepareSource(input, database, source) {
                 for (const { read, scope } of publications) {
                   if (
