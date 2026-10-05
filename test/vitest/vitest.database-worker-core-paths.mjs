@@ -16,6 +16,8 @@ export const databaseWorkerCoreTestFiles = [
   "src/state/openclaw-agent-execution-incognito.pending-history.test.ts",
   "src/state/openclaw-agent-execution-incognito.pending-input.test.ts",
   "src/config/sessions/session-sharing-store.incognito.test.ts",
+  "src/gateway/progress-card-store.incognito.test.ts",
+  "src/gateway/session-incognito-lifetime.actor.test.ts",
   "src/state/openclaw-agent-pending-inputs-schema.test.ts",
   "src/agents/bash-tools.visible-subagent-notify.test.ts",
   "src/agents/agent-command.compaction-rotation.test.ts",
