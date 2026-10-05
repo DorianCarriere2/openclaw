@@ -46,7 +46,10 @@ afterEach(async () => {
 function observeCallerSchemaInspections(...pathnames: string[]) {
   const inspections: string[] = [];
   const prepare = DatabaseSync.prototype.prepare;
-  const observer = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (sql) {
+  const observer = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (
+    this: DatabaseSync,
+    sql,
+  ) {
     const location = this.location();
     if (
       (location === null || pathnames.includes(location)) &&
@@ -154,6 +157,12 @@ it("publishes freshly verified proof to a previously admitted alias after stale 
           database.db.prepare("SELECT COUNT(*) AS count FROM session_nodes").get()?.count,
       ),
     ).resolves.toBe(0);
+    canonical.db.exec("CREATE TABLE coldadmit_alias_fixture(value TEXT)");
+    await withOpenClawAgentDatabaseWrite({ ...options, path: aliasPath }, (database) => {
+      expect(getAdmittedSqliteSchemaFacts(database.db)?.tables.has("coldadmit_alias_fixture")).toBe(
+        true,
+      );
+    });
     expect(observed.inspections).toEqual([]);
   } finally {
     observed.restore();
@@ -161,72 +170,78 @@ it("publishes freshly verified proof to a previously admitted alias after stale 
   }
 });
 
-it.each(["eviction", "additive-table", "missing-index", "alias"] as const)(
-  "readmits an evicted host handle with its retained worker after %s",
-  async (change) => {
-    const options = {
-      agentId: "main",
-      env: { OPENCLAW_STATE_DIR: tempDirs.make("agent-retained-readmission-") },
-    };
-    openOpenClawStateDatabase({ env: options.env });
-    const retainedExecution = captureOpenClawAgentDatabaseExecution(options);
-    try {
-      const database = await withOpenClawAgentDatabaseWrite(options, (opened) => {
-        if (change === "additive-table") {
-          opened.db.exec("CREATE TABLE coldadmit_fixture(value TEXT)");
-        } else if (change === "missing-index") {
-          opened.db.exec("DROP INDEX idx_agent_cache_expiry");
-        }
-        return opened;
-      });
-      const nativeClaim = retainedExecution.captureGenerationClaim();
-      const acquisitionPath =
-        change === "alias"
-          ? path.join(options.env.OPENCLAW_STATE_DIR, "alias.sqlite")
-          : database.path;
-      if (change === "alias") {
-        fs.symlinkSync(database.path, acquisitionPath);
+it.each([
+  "eviction",
+  "additive-table",
+  "missing-index",
+  "alias",
+  "warm-additive-table",
+  "warm-missing-index",
+] as const)("readmits a host handle with its retained worker after %s", async (change) => {
+  const options = {
+    agentId: "main",
+    env: { OPENCLAW_STATE_DIR: tempDirs.make("agent-retained-readmission-") },
+  };
+  openOpenClawStateDatabase({ env: options.env });
+  const retainedExecution = captureOpenClawAgentDatabaseExecution(options);
+  try {
+    const database = await withOpenClawAgentDatabaseWrite(options, (opened) => {
+      if (change.endsWith("additive-table")) {
+        opened.db.exec("CREATE TABLE coldadmit_fixture(value TEXT)");
+      } else if (change.endsWith("missing-index")) {
+        opened.db.exec("DROP INDEX idx_agent_cache_expiry");
       }
-      closeCachedOpenClawAgentDatabase(database, { eviction: true });
-      expect(database.db.isOpen).toBe(false);
-      nativeClaim.assertCurrent();
-      const observed = observeCallerSchemaInspections(database.path, acquisitionPath);
-      try {
-        const count = await withOpenClawAgentDatabaseWrite(
-          { ...options, path: acquisitionPath },
-          (reopened) => {
-            const facts = getAdmittedSqliteSchemaFacts(reopened.db);
-            expect(facts?.tables.has("coldadmit_fixture")).toBe(change === "additive-table");
-            expect(facts?.tables.has("session_nodes")).toBe(true);
-            expect(facts?.tables.has("session_key_contract")).toBe(true);
-            return reopened.db.prepare("SELECT COUNT(*) AS count FROM session_nodes").get()?.count;
-          },
-        );
-        expect(count).toBe(0);
-        nativeClaim.assertCurrent();
-        expect(observed.inspections).toEqual([]);
-      } finally {
-        observed.restore();
-      }
-      if (change === "missing-index") {
-        const inspector = openNodeSqliteDatabase(database.path, { readOnly: true });
-        try {
-          expect(
-            inspector
-              .prepare("SELECT sql FROM sqlite_schema WHERE name='idx_agent_cache_expiry'")
-              .get()?.sql,
-          ).toMatch(
-            /^CREATE INDEX idx_agent_cache_expiry\s+ON cache_entries\(scope, expires_at, key\)\s+WHERE expires_at IS NOT NULL$/,
-          );
-        } finally {
-          inspector.close();
-        }
-      }
-    } finally {
-      await retainedExecution.release();
+      return opened;
+    });
+    const nativeClaim = retainedExecution.captureGenerationClaim();
+    const acquisitionPath =
+      change === "alias"
+        ? path.join(options.env.OPENCLAW_STATE_DIR, "alias.sqlite")
+        : database.path;
+    if (change === "alias") {
+      fs.symlinkSync(database.path, acquisitionPath);
     }
-  },
-);
+    if (!change.startsWith("warm-")) {
+      closeCachedOpenClawAgentDatabase(database, { eviction: true });
+    }
+    expect(database.db.isOpen).toBe(change.startsWith("warm-"));
+    nativeClaim.assertCurrent();
+    const observed = observeCallerSchemaInspections(database.path, acquisitionPath);
+    try {
+      const count = await withOpenClawAgentDatabaseWrite(
+        { ...options, path: acquisitionPath },
+        (reopened) => {
+          const facts = getAdmittedSqliteSchemaFacts(reopened.db);
+          expect(facts?.tables.has("coldadmit_fixture")).toBe(change.endsWith("additive-table"));
+          expect(facts?.tables.has("session_nodes")).toBe(true);
+          expect(facts?.tables.has("session_key_contract")).toBe(true);
+          return reopened.db.prepare("SELECT COUNT(*) AS count FROM session_nodes").get()?.count;
+        },
+      );
+      expect(count).toBe(0);
+      nativeClaim.assertCurrent();
+      expect(observed.inspections).toEqual([]);
+    } finally {
+      observed.restore();
+    }
+    if (change.endsWith("missing-index")) {
+      const inspector = openNodeSqliteDatabase(database.path, { readOnly: true });
+      try {
+        expect(
+          inspector
+            .prepare("SELECT sql FROM sqlite_schema WHERE name='idx_agent_cache_expiry'")
+            .get()?.sql,
+        ).toMatch(
+          /^CREATE INDEX idx_agent_cache_expiry\s+ON cache_entries\(scope, expires_at, key\)\s+WHERE expires_at IS NOT NULL$/,
+        );
+      } finally {
+        inspector.close();
+      }
+    }
+  } finally {
+    await retainedExecution.release();
+  }
+});
 
 it.each([
   { change: "schema", retainWorker: false },
@@ -237,6 +252,7 @@ it.each([
   { change: "owner", retainWorker: true },
   { change: "metadata-version", retainWorker: true },
   { change: "metadata-missing", retainWorker: true },
+  { change: "warm-schema", retainWorker: true },
 ] as const)(
   "refuses $change drift after worker admission with retained worker=$retainWorker",
   async ({ change, retainWorker }) => {
@@ -250,7 +266,11 @@ it.each([
     try {
       const database = await withOpenClawAgentDatabaseWrite(options, (opened) => opened);
       const pathname = database.path;
-      if (retainedExecution) {
+      if (change === "warm-schema") {
+        database.db.exec(
+          "ALTER TABLE auth_profile_state RENAME COLUMN state_json TO drifted_state_json",
+        );
+      } else if (retainedExecution) {
         closeCachedOpenClawAgentDatabase(database, { eviction: true });
       } else {
         await closeOpenClawAgentDatabasesAsync();
@@ -262,7 +282,7 @@ it.each([
       if (change === "damage") {
         clearOpenClawAgentIntegrityVerification(pathname, options.env);
         fs.writeFileSync(pathname, "damaged SQLite fixture");
-      } else {
+      } else if (change !== "warm-schema") {
         const editor = openNodeSqliteDatabase(pathname);
         try {
           const metadataChange = change === "owner" || change.startsWith("metadata-");

@@ -48,7 +48,7 @@ import { cleanupRetiredAgentDatabaseLease } from "./openclaw-agent-execution-cle
 import type {
   AgentDatabaseFileExecutionIdentity,
   AgentDatabaseExecutionFileIdentity,
-  AgentDatabaseExecutionOpen,
+  AgentDatabaseFileExecutionOpen,
   AgentDatabaseExecutionScope,
   AgentDatabaseGenerationClaim,
   AgentDatabaseNativeGeneration,
@@ -148,9 +148,9 @@ export function createAgentDatabaseNativeGeneration(
   expectedIdentity: AgentDatabaseExecutionFileIdentity | undefined,
   acceptFileIdentity: (identity: AgentDatabaseExecutionFileIdentity) => void,
   creatingIdentity?: DatabasePathIdentity,
-  creationClaim?: AgentDatabaseExecutionOpen["creationClaim"],
+  creationClaim?: AgentDatabaseFileExecutionOpen["creationClaim"],
 ): AgentDatabaseNativeGeneration {
-  const input: AgentDatabaseExecutionOpen = {
+  const input: AgentDatabaseFileExecutionOpen = {
     leaseId: randomUUID(),
     agentId,
     databasePath: pathname,

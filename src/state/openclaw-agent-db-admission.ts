@@ -266,10 +266,17 @@ export function createOpenClawAgentDatabaseAdmissionOwner(
     const pathname = resolveOpenClawAgentSqlitePath({ ...options, agentId });
     options.env.OPENCLAW_STATE_DIR = resolveStateDir(options.env);
     options.path = pathname;
+    const cached = cache.databases.get(pathname);
+    const schema = getOpenClawAgentDatabaseValidationForTransfer({
+      agentId,
+      path: pathname,
+    })?.schema;
     if (
       !prepared &&
       isMainThread &&
-      !cache.databases.get(pathname)?.db.isOpen &&
+      (!cached?.db.isOpen ||
+        (!cache.incognito.has(cached) &&
+          (!schema || Atomics.load(new Int32Array(schema.valid), 0) !== 1))) &&
       !cache.pending.has(pathname)
     ) {
       return withWorkerAdmission(options, assertCurrent, signal, (preparation) =>

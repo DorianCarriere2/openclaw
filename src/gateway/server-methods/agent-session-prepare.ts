@@ -104,7 +104,7 @@ export async function prepareAgentSession(params: PrepareAgentSessionParams) {
   );
 }
 
-function prepareAdmittedAgentSession(
+async function prepareAdmittedAgentSession(
   params: PrepareAgentSessionParams,
   selected: ReturnType<typeof loadSessionEntry>,
   requestedAgentId: string,
@@ -250,7 +250,7 @@ function prepareAdmittedAgentSession(
   const mainSessionKey = resolveAgentMainSessionKey({ cfg, agentId: canonicalSessionAgentId });
   const isSystemGatewayRun =
     effectiveBootstrapContextRunKind === "cron" || effectiveBootstrapContextRunKind === "heartbeat";
-  const reuse = evaluateAgentSessionReuse({
+  const reuse = await evaluateAgentSessionReuse({
     freshEntry: entry,
     cfg,
     sessionAgentId: canonicalSessionAgentId,
@@ -265,6 +265,7 @@ function prepareAdmittedAgentSession(
     visibleRequest,
     failedSessionTranscriptMissing,
   });
+  params.assertCurrent?.();
   const sessionId = reuse.sessionId ?? randomUUID();
   return {
     cfg,

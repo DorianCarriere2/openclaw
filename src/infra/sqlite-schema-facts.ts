@@ -481,7 +481,8 @@ export function adoptSqliteSchemaFacts(database: DatabaseSync, facts: SqliteSche
   if (!matchesSqliteSchemaFacts(database, facts)) {
     return false;
   }
-  bindScope(database, owner);
+  owner.scopeRevision = bindScope(database, owner).revision;
+  owner.snapshot = getSqlitePinnedReadSnapshot(database);
   owner.admitted = true;
   owner.dataVersion = dataVersion;
   owner.facts = { ...facts, revision: owner.revision };

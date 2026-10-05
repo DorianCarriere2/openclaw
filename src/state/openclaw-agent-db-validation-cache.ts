@@ -75,6 +75,15 @@ function bindValidationLifetime(
     if (validation.schema) {
       Atomics.store(new Int32Array(validation.schema.valid), 0, 0);
     }
+    // A retained alias can mutate after another opener replaced its receipt.
+    const published = validatedPaths.get(path.resolve(database.path))?.validation;
+    if (
+      published?.schema &&
+      published.agentId === validation.agentId &&
+      published.identity === validation.identity
+    ) {
+      Atomics.store(new Int32Array(published.schema.valid), 0, 0);
+    }
   });
   const unregister = registerNodeSqliteDisposeCallback(database.db, (reason) => {
     if (reason === "replace") {

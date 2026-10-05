@@ -7,8 +7,6 @@ import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-ke
 import { withOpenClawAgentDatabaseReadOnly } from "../../state/openclaw-agent-db-readonly.js";
 import { supportsOpenClawAgentDatabaseExecution } from "../../state/openclaw-agent-execution.js";
 import type { ConversationRouteContext } from "./conversation-route-context.js";
-import { resolveSessionLifecycleTimestampsWithHeader } from "./lifecycle-timestamps.js";
-import type { SessionLifecycleTimestamps } from "./lifecycle.types.js";
 import {
   cloneSessionEntries,
   createReplySessionInitializationRevision,
@@ -26,7 +24,6 @@ import {
   resolveSqliteScope,
   toDatabaseOptions,
 } from "./session-accessor.sqlite-scope.js";
-import { readTranscriptHeaderFromDatabase } from "./session-accessor.sqlite-transcript-metadata-read.js";
 import type {
   ReplySessionInitializationSnapshot,
   ReplySessionInitializationCommitContext,
@@ -76,14 +73,9 @@ type ReplySessionInitializationSelection = {
   relatedSessionKeys?: readonly string[];
 };
 
-type ReplySessionInitializationRows = {
-  entries: Record<string, SessionEntry>;
-  lifecycleTimestamps: SessionLifecycleTimestamps;
-};
-
 function loadReplySessionInitializationEntries(
   params: ReplySessionInitializationSelection,
-): ReplySessionInitializationRows {
+): Record<string, SessionEntry> {
   assertSessionInitializationAgentScope(params.agentId, params.sessionKey);
   const result = withOpenClawAgentDatabaseReadOnly(
     (database) =>
@@ -107,26 +99,18 @@ function loadReplySessionInitializationEntries(
             }
           }
         }
-        return {
-          entries,
-          lifecycleTimestamps: resolveSessionLifecycleTimestampsWithHeader({
-            entry: entries[currentKey],
-            agentId: database.agentId,
-            sessionKey: currentKey,
-            readHeader: ({ sessionId }) => readTranscriptHeaderFromDatabase(database, sessionId),
-          }),
-        };
+        return entries;
       }),
     toDatabaseOptions(resolveSqliteScope(params)),
   );
-  return result.found ? result.value : { entries: {}, lifecycleTimestamps: {} };
+  return result.found ? result.value : {};
 }
 
 async function loadReplySessionInitializationEntriesAsync(
   params: ReplySessionInitializationSelection,
   database: ReturnType<typeof toDatabaseOptions>,
   source?: DatabasePathIdentity,
-): Promise<ReplySessionInitializationRows> {
+): Promise<Record<string, SessionEntry>> {
   assertSessionInitializationAgentScope(params.agentId, params.sessionKey);
   if (!supportsOpenClawAgentDatabaseExecution(database)) {
     return loadReplySessionInitializationEntries(params);
@@ -143,7 +127,6 @@ async function loadReplySessionInitializationEntriesAsync(
         ]),
       ],
       replyInitializationSessionKey: currentKey,
-      lifecycleSessionKey: currentKey,
       env: { ...(database.env ?? process.env) },
     });
     reader.assertCurrent();
@@ -156,12 +139,7 @@ async function loadReplySessionInitializationEntriesAsync(
     ) {
       throw new Error("Reply initialization database changed after its snapshot");
     }
-    return {
-      entries: Object.fromEntries(
-        snapshot.entries.map(({ sessionKey, entry }) => [sessionKey, entry]),
-      ),
-      lifecycleTimestamps: snapshot.lifecycleTimestamps,
-    };
+    return Object.fromEntries(snapshot.entries.map(({ sessionKey, entry }) => [sessionKey, entry]));
   });
 }
 
@@ -197,7 +175,7 @@ export async function loadReplySessionInitializationSnapshot(
     ...params,
     storePath,
   });
-  const { entries: store, lifecycleTimestamps } = await loadReplySessionInitializationEntriesAsync(
+  const store = await loadReplySessionInitializationEntriesAsync(
     { ...params, storePath },
     database,
     source,
@@ -207,7 +185,6 @@ export async function loadReplySessionInitializationSnapshot(
   const currentEntry = resolved.existing ? { ...resolved.existing } : undefined;
   return {
     ...(currentEntry ? { currentEntry } : {}),
-    lifecycleTimestamps,
     readEntry: (sessionKey) => {
       const entry = resolveSessionEntryFromStore({ store, sessionKey }).existing;
       return entry ? { ...entry } : undefined;
@@ -262,7 +239,7 @@ export async function commitReplySessionInitialization(params: {
       ...params,
       storePath,
     });
-  const { entries: store } = await loadReplySessionInitializationEntriesAsync(
+  const store = await loadReplySessionInitializationEntriesAsync(
     { ...params, storePath },
     database,
     source,
@@ -350,7 +327,7 @@ export async function commitReplySessionInitialization(params: {
     ) {
       throw error;
     }
-    const { entries: current } = await loadReplySessionInitializationEntriesAsync(
+    const current = await loadReplySessionInitializationEntriesAsync(
       {
         agentId: params.agentId,
         sessionKey: resolved.normalizedKey,

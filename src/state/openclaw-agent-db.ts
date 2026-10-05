@@ -228,6 +228,9 @@ function* openOpenClawAgentDatabaseSteps(
     if (preparedLease) {
       throw new Error("A prepared Worker lease cannot adopt an existing agent database handle");
     }
+    if (pending?.workerPrepared) {
+      adoptOpenClawAgentDatabaseSchema(opened, true, true);
+    }
     return opened;
   }
   assertAgentDatabaseResourceAdmission({ agentId, path: pathname });

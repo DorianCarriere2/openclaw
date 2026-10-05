@@ -53,20 +53,21 @@ it("preadmits cloud transcript guards and retains their handle through turn sett
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       const inspections: string[] = [];
       const prepare = DatabaseSync.prototype.prepare;
-      const observer = vi
-        .spyOn(DatabaseSync.prototype, "prepare")
-        .mockImplementation(function (sql) {
-          const location = this.location();
-          if (
-            (location === database.path || location === null) &&
-            /sqlite_(?:schema|master)|PRAGMA\s+(?:index_|table_|quick_check|integrity_check|foreign_key_check)/i.test(
-              sql,
-            )
-          ) {
-            inspections.push(sql);
-          }
-          return prepare.call(this, sql);
-        });
+      const observer = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (
+        this: DatabaseSync,
+        sql,
+      ) {
+        const location = this.location();
+        if (
+          (location === database.path || location === null) &&
+          /sqlite_(?:schema|master)|PRAGMA\s+(?:index_|table_|quick_check|integrity_check|foreign_key_check)/i.test(
+            sql,
+          )
+        ) {
+          inspections.push(sql);
+        }
+        return prepare.call(this, sql);
+      });
       try {
         const result = await withWorkerTurnTranscriptDatabase(turn, controls, async (pinned) => {
           expect(resolveWorkerTurnTranscriptTarget({ ...turn, sessionTarget: pinned })).toEqual(
