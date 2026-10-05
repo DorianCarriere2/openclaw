@@ -1,6 +1,7 @@
 import {
   embeddedAgentLog,
   type AgentMessage,
+  type claimPendingAgentQuestionAnswer,
   type queueAgentHarnessMessage,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
 import type { NativeSessionBindingAuthority } from "openclaw/plugin-sdk/agent-harness-session-runtime";
@@ -17,6 +18,24 @@ type AgentHarnessQueueMessageOptions = NonNullable<Parameters<typeof queueAgentH
 export type CodexSteeringPreparation = Parameters<
   NonNullable<NativeSessionBindingAuthority["withPreparedCurrent"]>
 >[1][number];
+export type CodexQuestionInputAuthority = NonNullable<
+  Parameters<typeof claimPendingAgentQuestionAnswer>[0]["authority"]
+>;
+
+export function createCodexQuestionAuthority(assertActive: () => void) {
+  return (
+    kind: CodexQuestionInputAuthority["kind"],
+    assertSource: (() => void) | undefined,
+    toolAuthorityPreparation?: CodexSteeringPreparation,
+  ): CodexQuestionInputAuthority => ({
+    kind,
+    toolAuthorityPreparation,
+    assertCurrent: () => {
+      assertSource?.();
+      assertActive();
+    },
+  });
+}
 
 export class CodexSteeringAcceptedUnconfirmedError extends Error {
   constructor(message: string, options?: ErrorOptions) {

@@ -120,13 +120,31 @@ function resolveReplyBackendMessageInjection(
               authorityKind,
             )
           : guarded.queueMessage(text, options, assertCurrent, authorityKind),
-      claimPendingUserInputAnswer: guarded.claimPendingUserInputAnswer
-        ? (text, options) =>
-            guarded.claimPendingUserInputAnswer!(text, options, assertCurrent, authorityKind)
-        : undefined,
-      cancelPendingUserInput: guarded.cancelPendingUserInput
-        ? (resolvedBy) => guarded.cancelPendingUserInput!(resolvedBy, assertCurrent, authorityKind)
-        : undefined,
+      claimPendingUserInputAnswer:
+        preparation && guarded.claimPendingUserInputAnswerAsync
+          ? (text, options) =>
+              guarded.claimPendingUserInputAnswerAsync!(
+                text,
+                options,
+                { ...preparation, compatAssertCurrent: assertCurrent },
+                authorityKind,
+              )
+          : guarded.claimPendingUserInputAnswer
+            ? (text, options) =>
+                guarded.claimPendingUserInputAnswer!(text, options, assertCurrent, authorityKind)
+            : undefined,
+      cancelPendingUserInput:
+        preparation && guarded.cancelPendingUserInputAsync
+          ? (resolvedBy) =>
+              guarded.cancelPendingUserInputAsync!(
+                resolvedBy,
+                { ...preparation, compatAssertCurrent: assertCurrent },
+                authorityKind,
+              )
+          : guarded.cancelPendingUserInput
+            ? (resolvedBy) =>
+                guarded.cancelPendingUserInput!(resolvedBy, assertCurrent, authorityKind)
+            : undefined,
     };
   }
   if (sourceBound) {

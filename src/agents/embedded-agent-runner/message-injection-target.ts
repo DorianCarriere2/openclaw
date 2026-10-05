@@ -363,19 +363,36 @@ export function bindEmbeddedMessageInjection(
                 authorityKind,
               )
             : guarded.queueMessage(text, injectionOptions, assertCurrent, authorityKind),
-        claimPendingUserInputAnswer: guarded.claimPendingUserInputAnswer
-          ? (text, injectionOptions) =>
-              guarded.claimPendingUserInputAnswer!(
-                text,
-                injectionOptions,
-                assertCurrent,
-                authorityKind,
-              )
-          : undefined,
-        cancelPendingUserInput: guarded.cancelPendingUserInput
-          ? (resolvedBy) =>
-              guarded.cancelPendingUserInput!(resolvedBy, assertCurrent, authorityKind)
-          : undefined,
+        claimPendingUserInputAnswer:
+          preparation && guarded.claimPendingUserInputAnswerAsync
+            ? (text, injectionOptions) =>
+                guarded.claimPendingUserInputAnswerAsync!(
+                  text,
+                  injectionOptions,
+                  { ...preparation, compatAssertCurrent: assertCurrent },
+                  authorityKind,
+                )
+            : guarded.claimPendingUserInputAnswer
+              ? (text, injectionOptions) =>
+                  guarded.claimPendingUserInputAnswer!(
+                    text,
+                    injectionOptions,
+                    assertCurrent,
+                    authorityKind,
+                  )
+              : undefined,
+        cancelPendingUserInput:
+          preparation && guarded.cancelPendingUserInputAsync
+            ? (resolvedBy) =>
+                guarded.cancelPendingUserInputAsync!(
+                  resolvedBy,
+                  { ...preparation, compatAssertCurrent: assertCurrent },
+                  authorityKind,
+                )
+            : guarded.cancelPendingUserInput
+              ? (resolvedBy) =>
+                  guarded.cancelPendingUserInput!(resolvedBy, assertCurrent, authorityKind)
+              : undefined,
       }
     : undefined;
 }

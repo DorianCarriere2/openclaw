@@ -1,4 +1,5 @@
 import type { AgentWaitParams } from "../../packages/gateway-protocol/src/index.js";
+import { readQuestionDispatchCapability } from "../agents/harness/host-private-capabilities.js";
 import { captureGatewayToolCallerAssertion } from "../agents/tools/gateway-caller-context.js";
 import { getPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
 import type { PluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.types.js";
@@ -326,6 +327,8 @@ export async function dispatchGatewayMethodInProcessRaw(
         resolved.assertContextCurrent();
         resolved.assertInvocationCurrent();
       },
+      questionCallerRead: readQuestionDispatchCapability(options?.prepareDispatchCurrent)
+        ?.callerRead,
       sessionMutationCommitGuard: () => {
         resolved.assertContextCurrent();
         resolved.assertInvocationCurrent();

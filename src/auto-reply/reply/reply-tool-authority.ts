@@ -22,6 +22,7 @@ import {
   isToolAuthorityReadCaptureActive,
   prepareReplyToolAuthorityCallerRead,
   recordPreparedToolAuthorityRead,
+  type PreparedQuestionCallerRead,
 } from "../../agents/harness/host-private-capabilities.js";
 import { readOperatorModelPolicyMembership } from "../../agents/operator-model-policy.js";
 import {
@@ -37,12 +38,9 @@ import { normalizeChatType } from "../../channels/chat-type.js";
 import { captureRuntimeConfig } from "../../config/runtime-source-projection.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { resolveGroupSessionKey } from "../../config/sessions/group.js";
+import { readExactSessionEntryRow } from "../../config/sessions/session-accessor.sqlite-entry-read.js";
 import { assertCapturedSessionEntryReadSource } from "../../config/sessions/session-accessor.sqlite-exact-read.js";
 import { withSessionEntriesFromStoresInWorker } from "../../config/sessions/session-entry-read-runtime.js";
-import type {
-  SessionEntryWorkerRead,
-  PreparedSessionEntryWorkerRead,
-} from "../../config/sessions/session-entry-read-runtime.types.js";
 import { resolveUnsuffixedSqliteTargetFromSessionStorePath } from "../../config/sessions/session-sqlite-target-paths.js";
 import { captureSessionStoreReadCandidate } from "../../config/sessions/session-store-read-candidates.js";
 import { loadGatewaySessionEntryReadOnlyInWorker } from "../../gateway/session-utils-store-worker.js";
@@ -50,6 +48,7 @@ import { readDatabasePathIdentitySync } from "../../infra/sqlite-worker-identity
 import { isIncognitoSessionKey } from "../../routing/session-key.js";
 import { GATEWAY_OWNER_ONLY_CORE_TOOLS } from "../../security/dangerous-tools.js";
 import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
+import { retainOpenClawAgentDatabaseReadOnly } from "../../state/openclaw-agent-db-readonly.js";
 import type { RuntimeMsgContext } from "../templating.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
 import type { FollowupRun } from "./queue/types.js";
@@ -655,7 +654,7 @@ export function prepareReplyToolAuthority(
         }
         assertSources();
       };
-      const reads: readonly SessionEntryWorkerRead[] =
+      const reads: PreparedQuestionCallerRead["reads"] =
         original && storePath
           ? [
               {
@@ -667,7 +666,7 @@ export function prepareReplyToolAuthority(
               },
             ]
           : [];
-      const assertPrepared = (currentReads: readonly PreparedSessionEntryWorkerRead[]) => {
+      const assertPrepared: PreparedQuestionCallerRead["assertPrepared"] = (currentReads) => {
         for (const read of currentReads) {
           read.assertCurrent();
         }
@@ -676,12 +675,48 @@ export function prepareReplyToolAuthority(
             ?.entry,
         );
       };
-      recordPreparedToolAuthorityRead({ reads, assertPrepared });
-      return {
-        prepareCurrent: async () => {
-          await withSessionEntriesFromStoresInWorker(reads, assertPrepared);
+      const prepared: PreparedQuestionCallerRead = {
+        reads,
+        assertPrepared,
+        prepareCurrent: () => withSessionEntriesFromStoresInWorker(reads, assertPrepared),
+        retainNative() {
+          assertSources();
+          // Secret writes retain their pre-existing other-owner check at both worker grants.
+          const retained =
+            original && storePath
+              ? retainOpenClawAgentDatabaseReadOnly({
+                  agentId: source?.agentId ?? original.agentId,
+                  path: storePath,
+                  env,
+                })
+              : undefined;
+          if (retained && !retained.found && (source || retained.reason !== "database-missing")) {
+            throw new Error("Tool authority classification source is unavailable");
+          }
+          if (!retained?.found || !original) {
+            return { assertCurrent: () => assertEntry(undefined), release: () => {} };
+          }
+          const assertCurrent = () => {
+            assertSources();
+            retained.claim.assertCurrent();
+            if (source) {
+              assertCapturedSessionEntryReadSource(source, retained.database);
+            }
+            assertEntry(
+              readExactSessionEntryRow(
+                retained.database,
+                original.canonicalKey,
+                "list",
+                "canonical",
+              )?.entry,
+            );
+          };
+          // Consumers validate policy at the effect boundary; retention only pins the reader.
+          return { assertCurrent, release: retained.claim.release };
         },
       };
+      recordPreparedToolAuthorityRead(prepared);
+      return prepared;
     },
   );
   return result;
