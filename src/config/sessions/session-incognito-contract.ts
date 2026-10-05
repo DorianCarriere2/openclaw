@@ -1,8 +1,5 @@
-import type { SqliteWorkerEphemeralTarget } from "../../infra/sqlite-worker-contract.js";
-import type { CommittedSessionSharingFacts } from "./session-accessor.sqlite-sharing-acquisition.js";
 import type { IncognitoComputeOperations } from "./session-incognito-compute-contract.js";
-import type { IncognitoEntryCreationOperations } from "./session-incognito-entry-creation-contract.js";
-import type { IncognitoEntryPatchOperations } from "./session-incognito-entry-patch-contract.js";
+import type { IncognitoSessionFacts } from "./session-incognito-facts.types.js";
 import type { IncognitoHistoryOperations } from "./session-incognito-history-contract.js";
 import type { IncognitoLifecycleOperations } from "./session-incognito-lifecycle-contract.js";
 import type { IncognitoOutboxOperations } from "./session-incognito-outbox-contract.js";
@@ -11,16 +8,9 @@ import type { IncognitoSideDataOperations } from "./session-incognito-side-data-
 import type { IncognitoTranscriptOperations } from "./session-incognito-transcript-contract.js";
 import type { SessionEntry } from "./types.js";
 
-type IncognitoSessionVersion = Pick<SessionEntry, "sessionId" | "lifecycleRevision">;
+export type { IncognitoSessionFacts } from "./session-incognito-facts.types.js";
 
-/** Content-free postimage; full entries remain owned by the requesting read. */
-export type IncognitoSessionFacts = {
-  identity: Readonly<SqliteWorkerEphemeralTarget>;
-  sessionKey: string;
-  revision: number;
-  sharing: CommittedSessionSharingFacts | undefined;
-  expiresAt?: number;
-};
+type IncognitoSessionVersion = Pick<SessionEntry, "sessionId" | "lifecycleRevision">;
 
 export type IncognitoSessionSnapshot = {
   entry: SessionEntry | undefined;
@@ -38,9 +28,7 @@ export type IncognitoSessionCreate = {
   cwd?: string;
 };
 
-type DomainOperations = IncognitoEntryCreationOperations &
-  IncognitoEntryPatchOperations &
-  IncognitoSideDataOperations &
+type DomainOperations = IncognitoSideDataOperations &
   IncognitoComputeOperations &
   IncognitoHistoryOperations &
   IncognitoLifecycleOperations &

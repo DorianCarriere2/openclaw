@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import path from "node:path";
 import {
   sessionChanges,
   type SessionRowChange,
@@ -23,9 +24,6 @@ import {
 } from "./session-accessor.sqlite-entry-cache-state.js";
 import {
   createSessionEntryCreationOperation,
-  assertSessionEntryCreationCurrent,
-  assertSessionEntryCreationTarget,
-  type SessionEntryCreationTarget,
   projectSessionSharingEntry,
   readSessionEntryCreationIdentity,
   type SessionEntryCacheDatabase,
@@ -181,11 +179,24 @@ export function publishSessionEntryWorkerMetadataInvalidation(params: {
   sessionChanges.emit(change);
 }
 
+function assertCreationCurrent(
+  creation: CreationRecord | undefined,
+): asserts creation is CreationRecord {
+  if (!creation?.active) {
+    throw new Error("Session creation publication owner is no longer current");
+  }
+  const source = creation.source;
+  if (source.kind === "file") {
+    source.assertCurrent();
+  } else if (!source.database.db.isOpen || source.database.agentId !== source.agentId) {
+    throw new Error("Session creation publication owner is no longer current");
+  }
+}
+
 function creationMatchesDatabase(creation: CreationRecord, database: SessionEntryCacheDatabase) {
   return creation.source.kind === "native"
     ? creation.source.database.db === database.db
-    : creation.source.kind === "file" &&
-        creation.source.agentId === database.agentId &&
+    : creation.source.agentId === database.agentId &&
         findOpenClawAgentDatabaseIdentity(database)?.identity === creation.source.databaseIdentity;
 }
 
@@ -197,12 +208,7 @@ export async function withSessionEntryCreationPublication<T>(
     bind?: (operation: SessionEntryCreationOperation) => void;
   } & (
     | { database: SessionEntryCacheDatabase & { path: string }; file?: never }
-    | {
-        database?: never;
-        file: Omit<Exclude<CreationDatabase, { kind: "native" }>, "kind"> & {
-          kind?: "file" | "actor";
-        };
-      }
+    | { database?: never; file: Omit<Extract<CreationDatabase, { kind: "file" }>, "kind"> }
   ),
   run: (operation: SessionEntryCreationOperation) => Promise<T>,
 ): Promise<T> {
@@ -231,15 +237,37 @@ export function runWithSessionEntryCreationPublication<T>(
   run: () => Promise<T>,
 ): Promise<T> {
   const creation = preparedSharingChanges.operations.get(operation);
-  assertSessionEntryCreationCurrent(creation);
+  assertCreationCurrent(creation);
   return preparedSharingChanges.current.run(creation, run);
 }
 
 export function assertSessionEntryCreationPublication(
   operation: SessionEntryCreationOperation,
-  target: SessionEntryCreationTarget,
+  target: {
+    agentId: string;
+    sessionKey: string;
+    paths: ReadonlySet<string>;
+    databaseIdentity?: string;
+  },
 ): void {
-  assertSessionEntryCreationTarget(preparedSharingChanges.operations.get(operation), target);
+  const creation = preparedSharingChanges.operations.get(operation);
+  assertCreationCurrent(creation);
+  const sourcePath =
+    creation.source.kind === "native" ? creation.source.database.path : creation.source.path;
+  const matchesDatabaseIdentity =
+    creation.source.kind === "file" &&
+    target.databaseIdentity === `file:${creation.source.databaseIdentity}`;
+  const matchesTarget =
+    target.databaseIdentity !== undefined
+      ? matchesDatabaseIdentity
+      : target.paths.has(path.resolve(sourcePath));
+  if (
+    creation.agentId !== target.agentId ||
+    creation.sessionKey !== target.sessionKey ||
+    !matchesTarget
+  ) {
+    throw new Error("Session creation publication owner is no longer current");
+  }
 }
 
 export function readSessionEntryCreationTransition(
@@ -253,7 +281,7 @@ export function readSessionEntryCreationTransition(
     return undefined;
   }
   try {
-    assertSessionEntryCreationCurrent(creation);
+    assertCreationCurrent(creation);
   } catch {
     return undefined;
   }

@@ -33,7 +33,6 @@ import type {
   SessionEntryCreateWithTranscriptPrepareResult,
   SessionEntryCreateWithTranscriptOptions,
 } from "./session-accessor.types.js";
-import { captureIncognitoSessionBinding } from "./session-incognito-binding.js";
 import { resolveSessionStorePathForScope } from "./session-store-path.js";
 import {
   assertSessionStoreReadCandidate,
@@ -384,9 +383,8 @@ export async function createSessionEntryWithTranscript<TError = string>(
   const storePath = resolveSessionStorePathForScope(captured);
   const agentId = captured.agentId ?? resolveAgentIdFromSessionKey(captured.sessionKey);
   const target = { ...captured, agentId, storePath };
-  const incognito = captureIncognitoSessionBinding(target);
   const resolved = captureLifecycleDatabaseScope(
-    isMainThread && !incognito ? await prepareSqliteScope(target) : resolveSqliteScope(target),
+    isMainThread ? await prepareSqliteScope(target) : resolveSqliteScope(target),
   );
   return createSessionEntryWithTranscriptInScope(resolved, createEntry, options);
 }

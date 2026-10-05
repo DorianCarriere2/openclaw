@@ -109,10 +109,9 @@ export class SessionManager extends SessionManagerBranching {
     persistenceTarget?: SessionManagerPersistenceTarget,
     loadedEntries?: readonly unknown[],
     boundedContext?: SessionManagerBoundedContext,
-    transcriptMutationAt?: number | null,
     version?: SessionTranscriptContextVersion,
   ) {
-    super(cwd, persistenceTarget, loadedEntries, boundedContext, transcriptMutationAt, version);
+    super(cwd, persistenceTarget, loadedEntries, boundedContext, version);
     this.retainTranscriptWriter();
   }
 
@@ -490,7 +489,6 @@ export class SessionManager extends SessionManagerBranching {
       hydration.target,
       entries,
       undefined,
-      prepared.snapshot.version.updatedAt,
       prepared.snapshot.version,
     );
   }
@@ -519,7 +517,6 @@ export class SessionManager extends SessionManagerBranching {
       capturedTarget,
       entries,
       undefined,
-      snapshot.version.updatedAt,
       snapshot.version,
     );
   }
