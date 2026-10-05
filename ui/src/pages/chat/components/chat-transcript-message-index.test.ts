@@ -753,6 +753,19 @@ describe("subagent handoff", () => {
     expect(chain.transcriptItems.some((item) => item.kind === "stream-run")).toBe(false);
   });
 
+  it("leaves that block as it was between the wait ending and the resume", () => {
+    const waitingKey = framesOf(waitingChain())[0]?.key;
+    // The last subagent finished; the handed-off run has not been resumed yet.
+    const chain = projectTranscriptChain(chatItems({ messages: waiting }), chainOptions);
+    const frames = framesOf(chain);
+    expect(frames).toHaveLength(1);
+    expect(frames[0]).toMatchObject({ key: waitingKey, runId: "run-1" });
+    expect(frameShows(frames[0], prose)).toBe(true);
+    // Its operations are not rolled up under the handoff sentence in the meantime.
+    expect(frames[0]?.parts.some((part) => part.kind === "work-group")).toBe(false);
+    expect(chain.transcriptItems.some((item) => item.kind === "notice")).toBe(false);
+  });
+
   it("keeps the resumed run's status in that block before its run id is known", () => {
     const waitingKey = framesOf(waitingChain())[0]?.key;
     resetWorkingProgress();

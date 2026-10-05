@@ -84,16 +84,17 @@ function scanSessionsYieldItems(
           (runId) => lastYield.runId !== undefined && runId !== lastYield.runId,
         ) ||
         (insideWorkingTurn && working !== undefined && !working.item.runId);
+      // Nothing is drawn here. The boundary keeps the handed-off turn's rows in
+      // place, also between the wait ending and the resume, and keeps a resumed
+      // run's rows from pooling or rolling up with the run that handed off.
+      boundary.push({
+        kind: "notice",
+        key: `yield:${item.key}:${lastYield.id}`,
+        handoffBoundary: true,
+        text: "",
+        timestamp: timestamp ?? 0,
+      });
       if (resumed) {
-        // Nothing is drawn here, but the resumed run's rows must not pool, roll
-        // up or frame together with the run that handed off.
-        boundary.push({
-          kind: "notice",
-          key: `yield:${item.key}:${lastYield.id}`,
-          handoffBoundary: true,
-          text: "",
-          timestamp: timestamp ?? 0,
-        });
         const handoffRunId = lastYield.runId ?? transcriptRunId(message);
         if (
           insideWorkingTurn &&

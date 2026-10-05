@@ -43,6 +43,8 @@ const nestedHistory = [
   },
 ];
 const pendingHandoff = { timestamp: 2_000, runId: "parent-run" };
+// A confirmed handoff leaves one structural item behind and nothing to draw.
+const silentBoundary = expect.objectContaining({ kind: "notice", handoffBoundary: true, text: "" });
 
 describe("sessions_yield transcript projection", () => {
   it.each([false, true])(
@@ -83,7 +85,10 @@ describe("sessions_yield transcript projection", () => {
     ["nested exec activity", nestedHistory],
   ])("leaves no transcript row for %s and reports the pending handoff", (_name, messages) => {
     const original = structuredClone(messages);
-    expect(buildChatItems(createProps({ messages, showToolCalls: false }))).toEqual([]);
+    // Only the boundary remains, and it carries nothing a reader could see.
+    expect(buildChatItems(createProps({ messages, showToolCalls: false }))).toEqual([
+      silentBoundary,
+    ]);
     expect(pendingSessionsYield(messages)).toEqual(pendingHandoff);
     expect(pendingSessionsYield(messages)).toEqual(pendingHandoff);
     expect(messages).toEqual(original);
@@ -101,9 +106,7 @@ describe("sessions_yield transcript projection", () => {
     const messages = [...separateHistory, later];
     const items = buildChatItems(createProps({ messages }));
     // The boundary is structural: it carries nothing a reader could see.
-    expect(items.filter((item) => item.kind === "notice")).toEqual([
-      expect.objectContaining({ handoffBoundary: true, text: "" }),
-    ]);
+    expect(items.filter((item) => item.kind === "notice")).toEqual([silentBoundary]);
     expect(items[0]).toMatchObject({ kind: "notice", handoffBoundary: true });
     expect(items[0]).not.toHaveProperty("label");
     expect(pendingSessionsYield(messages)).toBeNull();
@@ -173,7 +176,7 @@ describe("sessions_yield transcript projection", () => {
       },
     ];
     const items = buildChatItems(createProps({ messages }));
-    expect(items.some((item) => item.kind === "notice")).toBe(false);
+    expect(items.filter((item) => item.kind === "notice")).toEqual([silentBoundary]);
     const remaining = items.flatMap((item) => (item.kind === "group" ? item.messages : []));
     expect(
       remaining.flatMap(({ message }) => extractToolCardsCached(message).map((card) => card.name)),
@@ -216,7 +219,7 @@ describe("sessions_yield transcript projection", () => {
     const items = buildChatItems(
       createProps({ messages, subagentWait: { startedAt: 2_500, runId: "parent-run" } }),
     );
-    expect(items.some((item) => item.kind === "notice")).toBe(false);
+    expect(items.filter((item) => item.kind === "notice")).toEqual([silentBoundary]);
     expect(items.at(-1)).toMatchObject({
       kind: "reading-indicator",
       waitingOn: "subagents",
@@ -275,7 +278,6 @@ describe("sessions_yield transcript projection", () => {
       const items = buildChatItems(
         createProps({ messages: [asked, ...separateHistory], ...working }),
       );
-      expect(items.find((item) => item.kind === "notice")).toMatchObject({ handoffBoundary: true });
       const unnamed = items.find((item) => item.kind === "reading-indicator");
       expect(unnamed).toMatchObject({ startedAt: 1_000, request });
       expect(unnamed).not.toHaveProperty("runId");
