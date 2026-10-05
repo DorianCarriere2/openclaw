@@ -28,7 +28,10 @@ import {
 } from "./session-accessor.sqlite-scope.js";
 import type { SqliteSessionWriteOperation } from "./session-accessor.sqlite-write-operation.js";
 import { drainTranscriptIndexStatus } from "./session-transcript-index-maintenance.js";
-import { listSessionsNeedingTranscriptIndexReconcile } from "./session-transcript-index.js";
+import {
+  deleteOrphanedTranscriptIndexRowsInTransaction,
+  listSessionsNeedingTranscriptIndexReconcile,
+} from "./session-transcript-index.js";
 import type {
   TranscriptProjectionPublicationOperations,
   TranscriptProjectionRebuildOperations,
@@ -278,10 +281,13 @@ export async function readSessionTranscriptIndexStatus(
       : await runProjectionWrite(
           options,
           "sessions.transcript-index.preflight",
-          (database) => ({
-            sessionIds: listSessionsNeedingTranscriptIndexReconcile(database.db),
-            hasMore: false,
-          }),
+          (database) => {
+            deleteOrphanedTranscriptIndexRowsInTransaction(database.db);
+            return {
+              sessionIds: listSessionsNeedingTranscriptIndexReconcile(database.db),
+              hasMore: false,
+            };
+          },
           memorySource,
         );
     assertCurrent?.();

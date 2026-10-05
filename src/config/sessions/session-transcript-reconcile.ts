@@ -84,11 +84,13 @@ const RECONCILE_RETRY_BACKOFF_MS: readonly number[] = [0, 50, 200, 500, 1_000];
 
 type RunningReconcile = {
   generation: number;
+  request: PreparedReconcileParams;
   assertCurrent?: () => void;
   assertOwnerCurrent?: () => void;
   pending: boolean;
   signal?: AbortSignal;
   preferredSessionId?: string;
+  settlement?: Promise<void>;
   promise?: Promise<SessionTranscriptReconcileResult>;
 };
 
@@ -507,14 +509,14 @@ function startPreparedSessionTranscriptIndexReconcile(params: PreparedReconcileP
   } catch {
     runningCurrent = false;
   }
-  const cancelledCaller =
-    running?.generation === params.generation && running.signal?.aborted && runningCurrent
-      ? running
-      : undefined;
+  const sameAuthority =
+    running?.request.signal === params.signal &&
+    running?.request.assertCurrent === params.assertCurrent &&
+    running?.request.incognito?.authority === incognito?.authority;
   if (
     running?.generation === params.generation &&
-    !cancelledCaller &&
-    (running.signal?.aborted || runningCurrent)
+    ((running.signal?.aborted && !runningCurrent) ||
+      (sameAuthority && (running.signal?.aborted || runningCurrent)))
   ) {
     // The active pass snapshots dirty sessions. Latch later writes so it
     // rescans before ownership is released instead of losing their work.
@@ -522,8 +524,10 @@ function startPreparedSessionTranscriptIndexReconcile(params: PreparedReconcileP
     running.preferredSessionId ??= params.preferredSessionId;
     return;
   }
+  const predecessor = running?.generation === params.generation ? running : undefined;
   const state: RunningReconcile = {
     generation: params.generation,
+    request: params,
     pending: false,
     ...(params.preferredSessionId ? { preferredSessionId: params.preferredSessionId } : {}),
   };
@@ -552,15 +556,15 @@ function startPreparedSessionTranscriptIndexReconcile(params: PreparedReconcileP
   };
   let entered = false;
   let executionCurrent = true;
-  const pending = runSessionTranscriptReconcileOperation(
+  const accepted = runSessionTranscriptReconcileOperation(
     params.generation,
     async (operation) => {
       entered = true;
       state.signal = operation.signal;
       try {
-        // A fresh caller retains its own authority, but cannot overtake cancelled work's cleanup.
-        if (cancelledCaller) {
-          await cancelledCaller.promise;
+        // Distinct authorities keep their own cancellation and join accepted predecessor cleanup.
+        if (predecessor) {
+          await predecessor.settlement;
         }
         await yieldToGateway();
         let reconciledSessions = 0;
@@ -605,11 +609,27 @@ function startPreparedSessionTranscriptIndexReconcile(params: PreparedReconcileP
       ? undefined
       : { agentId: params.agentId, path: key },
     params.signal,
-  ).catch(async (error: unknown) => {
-    // Registration can refuse before the callback takes custody of this borrow.
-    if (!entered) {
-      await execution?.release();
+  );
+  const settled = accepted.then(
+    (value) => ok(value),
+    async (error: unknown) => {
+      // Registration can refuse before the callback takes custody of this borrow.
+      if (!entered) {
+        await execution?.release();
+      }
+      return err(error);
+    },
+  );
+  // A handoff may join a successor; queued callers wait native settlement, not that public join.
+  state.settlement = settled.then(
+    () => {},
+    () => {},
+  );
+  const pending = settled.then(async (outcome) => {
+    if (outcome.ok) {
+      return outcome.value;
     }
+    const error = outcome.error;
     log.warn(
       `session transcript reconcile failed agent=${params.agentId} error=${error instanceof Error ? error.message : String(error)}`,
     );
