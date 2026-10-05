@@ -662,6 +662,8 @@ export const databaseWorkerCoreTestFiles = [
   "src/state/openclaw-agent-execution.integrity.test.ts",
   "src/state/openclaw-agent-execution-incognito.test.ts",
   "src/state/openclaw-agent-execution-incognito.sessions.test.ts",
+  "src/state/openclaw-agent-execution-incognito.entry-patch.test.ts",
+  "src/state/openclaw-agent-execution-incognito.creation.test.ts",
   "src/plugin-sdk/codex-session-transcript-runtime.incognito.test.ts",
   "src/state/openclaw-agent-execution-incognito.acp.test.ts",
   "src/state/openclaw-agent-execution-incognito.side-data.test.ts",

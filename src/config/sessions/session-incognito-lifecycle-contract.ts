@@ -93,6 +93,19 @@ export function isIncognitoLifecycleWrite(type: keyof IncognitoLifecycleOperatio
   );
 }
 
+export function incognitoLifecycleRemovedEntries(
+  command: SqliteWorkerCommand<IncognitoLifecycleOperations>,
+): IncognitoLifecycleEntry[] | undefined {
+  const input = command.input;
+  return "target" in input
+    ? [input.target]
+    : "plan" in input
+      ? input.plan.entries.flatMap(({ sessionKey, expectedEntry }) =>
+          expectedEntry ? [{ sessionKey, entry: expectedEntry }] : [],
+        )
+      : undefined;
+}
+
 export function incognitoLifecycleKeys(
   command: SqliteWorkerCommand<IncognitoLifecycleOperations>,
   identity: Readonly<SqliteWorkerEphemeralTarget>,
