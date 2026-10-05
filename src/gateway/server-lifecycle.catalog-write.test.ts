@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { expect, it, vi } from "vitest";
 import { awaitGateBeforeSettlement, withinTest } from "../../test/helpers/promise.js";
+import { createOAuthManager } from "../agents/auth-profiles/oauth-manager.js";
+import type { OAuthCredential } from "../agents/auth-profiles/types.js";
 import { upsertSessionEntryCore } from "../config/sessions/session-accessor.sqlite-entry.js";
 import { resolvePhysicalSessionStorePath } from "../config/sessions/session-store-path.js";
 import { createGatewayUpdateLifecycle } from "../infra/update-check-lifecycle.js";
@@ -11,6 +13,8 @@ import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
 import * as stateWorker from "../state/openclaw-state-worker-store.js";
+import { connectUserModelAccount, readUserModelAuthProfile } from "../state/user-model-accounts.js";
+import { ensureProfileForEmail } from "../state/user-profiles.js";
 import "../test-utils/prepare-compiled-subprocesses.js";
 import { createGatewayMetadataCloseFixture } from "./server-close.metadata.test-support.js";
 import { runGatewayStartupObservers } from "./server-startup-observers.js";
@@ -300,6 +304,87 @@ it("joins accepted workspace persistence and releases its lease after the Gatewa
   } finally {
     release.resolve();
     await Promise.allSettled([writing, closing]);
+    vi.restoreAllMocks();
+    await fixture.cleanup();
+  }
+});
+
+it("joins personal OAuth settlement after the close prelude cancels its observer", async ({
+  signal,
+}) => {
+  const fixture = await createGatewayMetadataCloseFixture("gateway-personal-refresh-close");
+  const accepted = createDeferredCore();
+  const release = createDeferredCore();
+  const parentClosed = createDeferredCore();
+  let resolving: Promise<unknown> | undefined;
+  let closing: Promise<void> | undefined;
+  try {
+    const port = await fixture.reservePort();
+    const server = await fixture.start(port);
+    const kernel = fixture.kernels.get(port);
+    assert(kernel);
+    const shared = openOpenClawStateDatabase({ env: fixture.state.env }).db;
+    const owner = ensureProfileForEmail("close-personal@example.test");
+    const credential: OAuthCredential = {
+      type: "oauth",
+      provider: "synthetic",
+      access: "synthetic-close-old",
+      refresh: "synthetic-refresh-old",
+      expires: 1,
+    };
+    const { authProfileId: profileId } = connectUserModelAccount({
+      ownerProfileId: owner.id,
+      credential,
+      assertCurrent() {},
+    });
+    const replacement = {
+      ...credential,
+      access: "synthetic-close-new",
+      refresh: "synthetic-refresh-new",
+      expires: Date.now() + 600_000,
+    };
+    const manager = createOAuthManager({
+      canRefreshCredential: async () => true,
+      refreshCredential: async () => {
+        accepted.resolve();
+        await release.promise;
+        return replacement;
+      },
+      buildApiKey: async (_provider, value) => value.access,
+      readBootstrapCredential: () => null,
+    });
+    resolving = kernel.connectionWork
+      .track(() =>
+        manager.resolveOAuthAccess({
+          profileId,
+          credential,
+          store: { version: 1, profiles: { [profileId]: credential } },
+          signal: kernel.connectionWork.signal,
+        }),
+      )
+      .catch((error: unknown) => error);
+    await withinTest(
+      awaitGateBeforeSettlement(
+        accepted.promise,
+        resolving,
+        "Refresh did not acquire its durable claim",
+      ),
+      signal,
+    );
+    kernel.connectionWork.signal.addEventListener("abort", () => parentClosed.resolve(), {
+      once: true,
+    });
+    closing = server.close({ reason: "personal OAuth settlement regression" });
+    await withinTest(parentClosed.promise, signal);
+    expect(await resolving).toBeInstanceOf(Error);
+    expect(shared.isOpen).toBe(true);
+    release.resolve();
+    await closing;
+    expect(shared.isOpen).toBe(false);
+    expect(readUserModelAuthProfile(profileId)?.credential).toEqual(replacement);
+  } finally {
+    release.resolve();
+    await Promise.allSettled([resolving, closing]);
     vi.restoreAllMocks();
     await fixture.cleanup();
   }
