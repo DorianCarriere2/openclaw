@@ -657,7 +657,7 @@ export function createIncognitoSessionFacts(
           assertBorrowed();
           authority.assertCurrent();
           const captured = structuredClone(command);
-          const removedEntries = incognitoLifecycleRemovedEntries(captured);
+          const removedEntries = incognitoLifecycleRemovedEntries(captured.input);
           if (removedEntries && !captureLifecycle) {
             throw new Error("Incognito deletion requires its prepared lifecycle owner");
           }

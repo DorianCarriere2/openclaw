@@ -94,9 +94,8 @@ export function isIncognitoLifecycleWrite(type: keyof IncognitoLifecycleOperatio
 }
 
 export function incognitoLifecycleRemovedEntries(
-  command: SqliteWorkerCommand<IncognitoLifecycleOperations>,
+  input: IncognitoLifecycleOperations[keyof IncognitoLifecycleOperations]["input"],
 ): IncognitoLifecycleEntry[] | undefined {
-  const input = command.input;
   return "target" in input
     ? [input.target]
     : "plan" in input
