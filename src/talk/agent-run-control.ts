@@ -255,6 +255,12 @@ export async function controlRealtimeVoiceAgentRun(
     }
     options.toolAuthorityOverlay = overlay;
   };
+  const canInject = () => {
+    options.toolAuthorityOverlay?.operatorAuthority?.assertCurrent();
+    return target
+      ? !target.signal.aborted && target.isCurrent(sessionId)
+      : legacyOwner?.isCurrent() === true;
+  };
   const outcome: EmbeddedAgentQueueMessageOutcome =
     target || legacyOwner
       ? commands.queueGuardedEmbeddedAgentMessageWithOutcomeAsync
@@ -262,25 +268,18 @@ export async function controlRealtimeVoiceAgentRun(
             sessionId,
             steerText,
             options,
-            () => {
-              const currentOverlay = params.getToolAuthorityOverlay?.();
-              options.toolAuthorityOverlay = currentOverlay;
-              if (target) {
-                return !target.signal.aborted && target.isCurrent(sessionId);
-              }
-              return Boolean(
-                legacyOwner?.isCurrent() &&
-                (!currentOverlay || legacyOwner.matchesCaller(currentOverlay)),
-              );
-            },
+            canInject,
             bindWorkerToolPreparation({
               assertCurrent: () => {
-                if (
-                  target
-                    ? target.signal.aborted || !target.isCurrent(sessionId)
-                    : !legacyOwner?.isCurrent()
-                ) {
+                if (!canInject()) {
                   throw new Error("The original Talk run is no longer current");
+                }
+              },
+              compatAssertCurrent: () => {
+                const overlay = params.getToolAuthorityOverlay?.();
+                options.toolAuthorityOverlay = overlay;
+                if (overlay && legacyOwner && !legacyOwner.matchesCaller(overlay)) {
+                  throw new Error("The original Talk caller authority no longer matches");
                 }
               },
               prepareCurrent,

@@ -611,7 +611,13 @@ const queueEmbeddedAgentMessageAsync = createEmbeddedMessageInjectionQueue(async
         ? await prepareEmbeddedInjectionAuthority(sessionId, options, canInject, sourcePreparation)
         : undefined;
     assertCurrent();
-    prepared = prepareEmbeddedAgentQueueMessage(sessionId, options, canInject, authority);
+    prepared = prepareEmbeddedAgentQueueMessage(
+      sessionId,
+      options,
+      canInject,
+      authority,
+      sourcePreparation,
+    );
   } catch (error) {
     if (error instanceof MessageInjectionAuthorityError) {
       return createQueueFailureOutcome(sessionId, "tool_authority_mismatch");
@@ -713,8 +719,10 @@ function prepareEmbeddedAgentQueueMessage(
   options?: ReplyMessageInjectionOptions,
   sourceCanInject?: () => boolean,
   prepared?: { fingerprint?: string; preparation: EmbeddedInjectionPreparation },
+  sourcePreparation?: EmbeddedInjectionPreparation,
 ): PreparedEmbeddedAgentQueueMessage {
-  prepared?.preparation.assertCurrent();
+  const preparation = prepared?.preparation ?? sourcePreparation;
+  preparation?.assertCurrent();
   const reject = (reason: EmbeddedAgentQueueFailureReason): PreparedEmbeddedAgentQueueMessage => ({
     kind: "complete",
     outcome: createQueueFailureOutcome(sessionId, reason),
@@ -744,7 +752,7 @@ function prepareEmbeddedAgentQueueMessage(
     sessionId,
     handle,
     sourceCanInject,
-    prepared?.preparation,
+    preparation,
     options,
   );
   if (!injection) {

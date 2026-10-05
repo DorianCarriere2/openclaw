@@ -214,7 +214,10 @@ export function captureDirectEmbeddedMessageInjectionTarget(
 export type EmbeddedInjectionPreparation = Pick<
   ReplyToolAuthorityPreparation,
   "assertCurrent" | "prepareCurrent"
-> & { prepareMessage?: () => Promise<string> };
+> &
+  Partial<Pick<ReplyToolAuthorityPreparation, "compatAssertCurrent">> & {
+    prepareMessage?: () => Promise<string>;
+  };
 
 type EmbeddedInjectionTask = (
   sessionId: string,
@@ -270,7 +273,7 @@ export async function prepareEmbeddedInjectionAuthority(
     sourcePreparation?.assertCurrent();
     registration?.toolAuthority?.assertActive();
     return (
-      (!sourcePreparation && canInject ? canInject() : true) &&
+      (!canInject || canInject()) &&
       ACTIVE_EMBEDDED_RUNS.get(sessionId) === handle &&
       ACTIVE_EMBEDDED_RUN_REGISTRATIONS.get(handle) === registration &&
       (!ownedOperation ||
@@ -298,6 +301,7 @@ export async function prepareEmbeddedInjectionAuthority(
     preparation: bindWorkerToolPreparation(
       {
         assertCurrent,
+        compatAssertCurrent: sourcePreparation?.compatAssertCurrent,
         prepareCurrent: async () => {
           if ((await project()) !== fingerprint) {
             throw new Error("Queued caller tool authority changed during preparation");
@@ -327,6 +331,8 @@ export function bindEmbeddedMessageInjection(
   const ownedOperation =
     operation && getAttachedBackend(operation) === handle ? operation : undefined;
   const assertCurrent = createMessageInjectionAuthority(() => {
+    preparation?.assertCurrent();
+    preparation?.compatAssertCurrent?.();
     if (sourceCanInject && !sourceCanInject()) {
       return false;
     }

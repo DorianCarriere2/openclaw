@@ -20,6 +20,15 @@ import { createDeferredCore } from "../../shared/deferred.js";
 import { openOpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
 import { createCanonicalAgentConfigFixture } from "../../test-utils/config-roster.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
+import { steerActiveSessionWithOptionalDeliveryWait } from "../embedded-agent-runner/run/attempt-queue-message.js";
+import {
+  queueGuardedEmbeddedAgentMessageWithOutcomeAsync,
+  setActiveEmbeddedRun,
+} from "../embedded-agent-runner/runs.js";
+import {
+  createEmbeddedRunHandle,
+  testing as embeddedTesting,
+} from "../embedded-agent-runner/runs.test-support.js";
 import {
   createTestSession,
   registerAgentSessionLoopTestLifecycle,
@@ -27,9 +36,88 @@ import {
 
 registerAgentSessionLoopTestLifecycle();
 afterEach(() => {
+  embeddedTesting.resetActiveEmbeddedRuns();
   testing.resetReplyRunRegistry();
   vi.useRealTimers();
 });
+
+it.each(["allowed", "refused", "revoked"] as const)(
+  "retains the independent embedded caller guard through real enqueue: %s",
+  async (caller) => {
+    const { session } = await createTestSession();
+    const enqueue = vi.spyOn(session.agent, "steer");
+    const entered = createDeferredCore();
+    const resume = createDeferredCore();
+    let canInject = caller !== "refused";
+    const onQueueAccepted = vi.fn();
+    const sourcePreparation = {
+      assertCurrent() {},
+      async prepareCurrent() {},
+    };
+    const injection: ReplyBackendMessageInjectionV2 = {
+      version: 2,
+      isAvailable: () => true,
+      async queueMessage() {
+        throw new Error("Expected prepared embedded steering");
+      },
+      queueMessageAsync: (text, options, preparation) =>
+        steerActiveSessionWithOptionalDeliveryWait(
+          session,
+          text,
+          options,
+          undefined,
+          () => {
+            preparation.assertCurrent();
+            return true;
+          },
+          undefined,
+          async () => {
+            await preparation.prepareCurrent();
+            if (caller === "revoked") {
+              entered.resolve();
+              await resume.promise;
+            }
+          },
+        ),
+    };
+    const sessionId = `independent-caller-${caller}`;
+    setActiveEmbeddedRun(sessionId, {
+      ...createEmbeddedRunHandle(),
+      messageInjectionV2: injection,
+    });
+    const outcome = queueGuardedEmbeddedAgentMessageWithOutcomeAsync(
+      sessionId,
+      "independent caller input",
+      { onQueueAccepted },
+      () => canInject,
+      sourcePreparation,
+    );
+    try {
+      if (caller === "revoked") {
+        await awaitGateBeforeSettlement(
+          entered.promise,
+          outcome,
+          "Final preparation was not reached",
+        );
+        canInject = false;
+        resume.resolve();
+      }
+      await expect(outcome).resolves.toMatchObject({ queued: caller === "allowed" });
+      if (caller === "allowed") {
+        expect(enqueue).toHaveBeenCalledOnce();
+        expect(session.getSteeringMessages()).toEqual(["independent caller input"]);
+        expect(onQueueAccepted).toHaveBeenCalledExactlyOnceWith(true);
+      } else {
+        expect(enqueue).not.toHaveBeenCalled();
+        expect(session.getSteeringMessages()).toEqual([]);
+        expect(onQueueAccepted).not.toHaveBeenCalledWith(true);
+      }
+    } finally {
+      resume.resolve();
+      await outcome;
+    }
+  },
+);
 
 it("orders final steering preparation through the actual session enqueue", async () => {
   vi.useFakeTimers();

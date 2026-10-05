@@ -13,6 +13,7 @@ import { createUserTurnTranscriptRecorder } from "../../sessions/user-turn-trans
 import { createDeferredCore } from "../../shared/deferred.js";
 import { controlRealtimeVoiceAgentRun } from "../../talk/agent-run-control.js";
 import { realtimeVoiceControlRuntime } from "../../talk/agent-run-control.runtime.js";
+import { createQueueTestRun } from "./queue.test-helpers.js";
 import type {
   ReplyBackendMessageInjectionV2,
   ReplyToolAuthorityOverlay,
@@ -23,6 +24,7 @@ import {
   queueReplyMessageInjectionTarget,
 } from "./reply-run-registry.test-helpers.js";
 import { testing } from "./reply-run-registry.test-support.js";
+import { prepareReplyToolAuthority } from "./reply-tool-authority.js";
 
 afterEach(() => {
   embeddedTesting.resetActiveEmbeddedRuns();
@@ -265,3 +267,88 @@ it("classifies a refused raw projection as an authority mismatch before backend 
   ).resolves.toMatchObject({ queued: false, reason: "tool_authority_mismatch" });
   expect(queueMessage).not.toHaveBeenCalled();
 });
+
+it.each([
+  { backend: "legacy", revoked: false },
+  { backend: "legacy", revoked: true },
+  { backend: "prepared", revoked: false },
+  { backend: "prepared", revoked: true },
+] as const)(
+  "refreshes Talk caller policy before $backend enqueue (revoked: $revoked)",
+  async ({ backend, revoked }) => {
+    const sessionId = `talk-policy-${backend}-${revoked}`;
+    const sessionKey = `agent:main:${sessionId}`;
+    const run = createQueueTestRun({ prompt: "preserve this Talk input" });
+    Object.assign(run.run, { agentId: "main", sessionId, sessionKey });
+    const operation = createTestReplyOperation({ sessionId, sessionKey });
+    await operation.bindToolAuthoritySnapshotAsync(prepareReplyToolAuthority(run));
+    const fingerprint = await operation.bindToolAuthorityRouteAsync(run.run);
+    const entered = createDeferredCore();
+    const resume = createDeferredCore();
+    const enqueue = vi.fn();
+    const waitForCaller = async () => {
+      entered.resolve();
+      await resume.promise;
+    };
+    const injection: ReplyBackendMessageInjectionV2 = {
+      version: 2,
+      isAvailable: () => true,
+      queueMessage: async (text, _options, assertCurrent) => {
+        await waitForCaller();
+        assertCurrent();
+        enqueue(text);
+      },
+      ...(backend === "prepared"
+        ? {
+            queueMessageAsync: (async (text, _options, preparation) => {
+              await waitForCaller();
+              await preparation.prepareCurrent();
+              preparation.assertCurrent();
+              enqueue(text);
+            }) satisfies NonNullable<ReplyBackendMessageInjectionV2["queueMessageAsync"]>,
+          }
+        : {}),
+    };
+    const handle = {
+      ...createEmbeddedRunHandle({ runId: sessionId, toolAuthorityFingerprint: fingerprint }),
+      kind: "embedded" as const,
+      cancel() {},
+      messageInjectionV2: injection,
+    };
+    operation.attachBackend(handle);
+    operation.setPhase("running");
+    setActiveEmbeddedRun(sessionId, handle, sessionKey);
+    let overlay: ReplyToolAuthorityOverlay = {
+      senderIsOwner: false,
+      disableTools: false,
+      traceAuthorized: false,
+    };
+    const outcome = controlRealtimeVoiceAgentRun({
+      sessionKey,
+      mode: "steer",
+      text: run.prompt,
+      getToolAuthorityOverlay: () => overlay,
+    });
+    try {
+      await awaitGateBeforeSettlement(
+        entered.promise,
+        outcome,
+        "Talk did not reach backend preparation",
+      );
+      if (revoked) {
+        overlay = { ...overlay, disableTools: true };
+      }
+      resume.resolve();
+      await expect(outcome).resolves.toMatchObject({ queued: !revoked });
+      if (revoked) {
+        expect(enqueue).not.toHaveBeenCalled();
+      } else {
+        expect(enqueue).toHaveBeenCalledExactlyOnceWith(run.prompt);
+      }
+    } finally {
+      resume.resolve();
+      await outcome;
+      operation.complete();
+    }
+  },
+);
