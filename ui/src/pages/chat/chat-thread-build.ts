@@ -649,10 +649,11 @@ export function buildChatItems(
     hiddenHistoryKeys.size > 0 || hiddenKeys.size > 0
       ? new Set([...hiddenHistoryKeys, ...hiddenKeys])
       : undefined;
-  const projectYields = (source: ChatItem[]) =>
-    projectSessionsYieldItems(source, props.showToolCalls);
-  return groupMessages(projectYields(coalesceToolActivityMessages(items, hidden)), {
-    items: hidden ? projectYields(coalesceToolActivityMessages(items)) : undefined,
+  const projectYields = (source: ChatItem[], complete?: ChatItem[]) =>
+    projectSessionsYieldItems(source, props.showToolCalls, complete);
+  const complete = hidden ? projectYields(coalesceToolActivityMessages(items)) : undefined;
+  return groupMessages(projectYields(coalesceToolActivityMessages(items, hidden), complete), {
+    items: complete,
     people: props.replyPeople,
     localPerson: props.replyLocalPerson,
   });

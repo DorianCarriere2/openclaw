@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { ChatItem } from "../../lib/chat/chat-types.ts";
 import { extractToolCardsCached } from "../../lib/chat/tool-cards.ts";
+import { resetWorkingProgress } from "./chat-progress.ts";
 import { pendingSessionsYield, projectSessionsYieldItems } from "./chat-sessions-yield.ts";
 import { buildChatItems } from "./chat-thread-build.ts";
 import { createProps } from "./chat-thread.test-support.ts";
@@ -237,5 +238,60 @@ describe("sessions_yield transcript projection", () => {
       expect.objectContaining({ runId: "resumed-run" }),
     ]);
     expect(working.at(-1)).not.toHaveProperty("waitingOn");
+  });
+
+  describe("a run that resumed the handoff", () => {
+    const asked = { role: "user", content: "Split the work.", timestamp: 1_000 };
+    const request = { askedAt: 1_000, runIds: ["parent-run"] };
+    const working = { runActive: true, runWorking: true, streamStartedAt: 3_000 };
+    const status = (messages: unknown[], overrides: Parameters<typeof createProps>[0] = {}) =>
+      buildChatItems(
+        createProps({ messages, runId: "resumed-run", ...working, ...overrides }),
+      ).find((item) => item.kind === "reading-indicator");
+
+    it("counts from the request and names the run that handed off", () => {
+      expect(status([asked, ...separateHistory])).toMatchObject({
+        runId: "resumed-run",
+        startedAt: 1_000,
+        request,
+      });
+      // Search hides rows, not what the run is answering.
+      expect(
+        status([asked, ...separateHistory], { searchOpen: true, searchQuery: "no such text" }),
+      ).toMatchObject({ startedAt: 1_000, request });
+      // A second handoff in the same request extends the chain, oldest run first.
+      const again = separateHistory.map((message) => ({
+        ...message,
+        runId: "second-run",
+        timestamp: message.timestamp + 500,
+      }));
+      expect(status([asked, ...separateHistory, ...again])).toMatchObject({
+        request: { askedAt: 1_000, runIds: ["parent-run", "second-run"] },
+      });
+    });
+
+    it("is recognized before the pane knows its run id", () => {
+      resetWorkingProgress();
+      const items = buildChatItems(
+        createProps({ messages: [asked, ...separateHistory], ...working }),
+      );
+      expect(items.find((item) => item.kind === "notice")).toMatchObject({ handoffBoundary: true });
+      const unnamed = items.find((item) => item.kind === "reading-indicator");
+      expect(unnamed).toMatchObject({ startedAt: 1_000, request });
+      expect(unnamed).not.toHaveProperty("runId");
+    });
+
+    it("keeps its own status when the turn is not just that chain", () => {
+      // The request is outside the loaded window.
+      const unanchored = status(separateHistory);
+      expect(unanchored).toMatchObject({ runId: "resumed-run", startedAt: 3_000 });
+      expect(unanchored).not.toHaveProperty("request");
+      // A message sent after the handoff starts a request of its own.
+      const later = { role: "user", content: "Also check the docs.", timestamp: 2_500 };
+      expect(status([asked, ...separateHistory, later])).not.toHaveProperty("request");
+      // Another run already answered before the one that handed off began.
+      const earlier = { role: "assistant", runId: "first-run", timestamp: 1_500, content: "Done." };
+      expect(status([asked, earlier, ...separateHistory])).not.toHaveProperty("request");
+    });
   });
 });

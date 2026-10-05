@@ -549,6 +549,17 @@ export function collapseCompletedTurnWork(
     while (segmentStart > 0 && isTurnOutputGroup(turn[segmentStart - 1]!)) {
       segmentStart -= 1;
     }
+    // An answer that follows a handoff in its turn continues the block that
+    // handed off. Its work stays in place there, and the turn's closing line
+    // reports the whole request instead of a rollup timed for the last run.
+    if (
+      turn.some(
+        (item, index) => index < segmentStart && item.kind === "notice" && item.handoffBoundary,
+      )
+    ) {
+      result.push(...turn);
+      continue;
+    }
     // Independent reply-less runs retain their own activity rollup, rather than
     // becoming work for an earlier answer merely because no user spoke between them.
     const replyRunIds = runIdsWithVisibleReplies(turn);

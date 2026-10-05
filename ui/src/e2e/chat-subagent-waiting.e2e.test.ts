@@ -124,6 +124,19 @@ suite.define(() => {
         ).toBe(true);
         await page.setViewportSize({ width: 1280, height: 900 });
         await page.locator(".shell:not(.shell--mobile-nav)").waitFor();
+        const reportUsage = (usageRunId: string, outputTokens: number) =>
+          gateway.emitGatewayEvent("agent", {
+            stream: "usage",
+            runId: usageRunId,
+            seq: 1,
+            sessionKey: parent.key,
+            data: { outputTokens },
+            ts: now,
+          });
+        const workingTokens = async () =>
+          (await indicator.locator(".chat-working-indicator__tokens").textContent())?.trim();
+        await reportUsage(runId, 4_100);
+        await expect.poll(workingTokens).toBe("4.1k output tokens");
         const yieldCall = {
           role: "assistant",
           content: [
@@ -319,16 +332,27 @@ suite.define(() => {
           session: resumedParent,
           ancestorSessions: [],
         });
+        // The resumed run continues the block that handed off. That holds even
+        // before its first output, when the pane cannot name the run yet: the
+        // claw is already there, on the request's clock, with the tokens so far.
+        const block = activePane.locator(".chat-group.assistant", {
+          hasText: "Backend work is now delegated.",
+        });
+        const requestClock = () =>
+          block
+            .locator(".chat-working-indicator:not(.chat-working-indicator--subagents)")
+            .locator("openclaw-elapsed-time")
+            .evaluate((element) => Reflect.get(element, "startMs"));
+        await expect.poll(requestClock).toBe(history[0]!.timestamp);
+        expect(await activePane.locator(".chat-group.assistant").count()).toBe(1);
+        expect(await workingTokens()).toBe("4.1k output tokens");
+        const answerText = "The backend is complete. I am reviewing the result.";
         await gateway.emitGatewayEvent("chat", {
           sessionKey: parent.key,
           runId: "parent-resumed-run",
           state: "delta",
-          deltaText: "The backend is complete. I am reviewing the result.",
-          message: {
-            role: "assistant",
-            content: "The backend is complete. I am reviewing the result.",
-            timestamp: now + 65_000,
-          },
+          deltaText: answerText,
+          message: { role: "assistant", content: answerText, timestamp: now + 65_000 },
         });
         await page.locator(".chat-working-indicator--subagents").waitFor({ state: "detached" });
         await page
@@ -344,6 +368,69 @@ suite.define(() => {
             animations: "disabled",
           });
         }
+        // Still one assistant row once it answers, on the same clock, and both
+        // runs' tokens count on its line.
+        await block.getByText(answerText, { exact: true }).waitFor();
+        expect(await activePane.locator(".chat-group.assistant").count()).toBe(1);
+        expect(await requestClock()).toBe(history[0]!.timestamp);
+        await reportUsage("parent-resumed-run", 256);
+        await expect.poll(workingTokens).toBe("4.4k output tokens");
+
+        const answer = {
+          role: "assistant",
+          content: answerText,
+          stopReason: "stop",
+          timestamp: now + 66_000,
+          __openclaw: { id: "answer", seq: 5, runId: "parent-resumed-run" },
+        };
+        const finishedParent: GatewaySessionRow = {
+          ...resumedParent,
+          status: "done",
+          hasActiveRun: false,
+          hasActiveSubagentRun: false,
+          activeRunIds: [],
+          lastRunId: "parent-resumed-run",
+          runtimeMs: 2_000,
+          endedAt: now + 67_000,
+          updatedAt: now + 67_000,
+          snapshotAt: now + 67_000,
+        };
+        const finishedChild = {
+          ...settledChild,
+          updatedAt: now + 67_000,
+          snapshotAt: now + 67_000,
+        };
+        await gateway.setSessionsListResponse(
+          sessionsListResponse([finishedParent, finishedChild]),
+        );
+        await gateway.setMethodResponse("chat.history", {
+          messages: [...yieldedHistory, answer],
+          sessionId: parent.sessionId,
+          sessionInfo: finishedParent,
+          inFlightRun: null,
+        });
+        await gateway.emitGatewayEvent("chat", {
+          sessionKey: parent.key,
+          runId: "parent-resumed-run",
+          state: "final",
+          message: answer,
+        });
+        await gateway.emitGatewayEvent("sessions.changed", {
+          sessionKey: parent.key,
+          reason: "run-settled",
+          ts: now + 67_000,
+          session: finishedParent,
+          ancestorSessions: [],
+        });
+        // One closing line for the request: 77s since it was asked, not the
+        // resumed run's own 2s, with both runs' tokens.
+        const recap = activePane.locator(".chat-turn-recap");
+        await recap.waitFor();
+        expect((await recap.textContent())?.replace(/\s+/g, " ").trim()).toMatch(
+          /^Done in 1 minute,? 17 seconds · 4\.4k output tokens$/,
+        );
+        expect(await block.locator(".chat-turn-recap").count()).toBe(1);
+        expect(await activePane.locator(".chat-group.assistant").count()).toBe(1);
       },
     );
   });
