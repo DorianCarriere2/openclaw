@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { pathToFileURL } from "node:url";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { getGlobalHookRunner } from "openclaw/plugin-sdk/plugin-runtime";
 import {
@@ -12,6 +13,7 @@ import {
   resetPluginRuntimeStateForTest,
   setActivePluginRegistry,
 } from "openclaw/plugin-sdk/plugin-test-runtime";
+import { resolveRuntimeWorkerUrl } from "openclaw/plugin-sdk/process-runtime";
 import { resolveStorePath } from "openclaw/plugin-sdk/session-store-paths";
 import { upsertSessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
 import {
@@ -19,6 +21,7 @@ import {
   resolveOpenClawAgentSqlitePath,
   runOpenClawAgentWriteAdmission,
 } from "openclaw/plugin-sdk/sqlite-runtime";
+import * as sqliteRuntime from "openclaw/plugin-sdk/sqlite-runtime";
 import {
   closeOpenClawAgentDatabasesAsync,
   closeOpenClawAgentDatabasesForTest,
@@ -30,6 +33,7 @@ import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import plugin from "../index.js";
 import manifest from "../openclaw.plugin.json" with { type: "json" };
+import { memoryCpuProcessEntrypoints } from "./memory/manager-cpu-entrypoints.js";
 import { createStandingIntentExecutor } from "./standing-intents-tool.js";
 import {
   createStandingIntent,
@@ -118,11 +122,51 @@ async function holdWriter(beforeRelease?: () => void, beforeLock?: () => Promise
 }
 
 function failStandingIntentWrites(action: "create" | "list" | "cancel" | "match") {
-  const operation = action === "create" ? "INSERT" : "UPDATE";
-  openOpenClawAgentDatabase({ agentId: "main" }).db.exec(`
-    CREATE TRIGGER fail_standing_intent BEFORE ${operation} ON standing_intents
-    BEGIN SELECT RAISE(ABORT, 'fixture standing-intent write rejected'); END;
-  `);
+  const operation = action === "create" ? "insert into" : "update";
+  const moduleUrl = resolveRuntimeWorkerUrl(memoryCpuProcessEntrypoints.standingIntents);
+  const fixturePath = path.join(stateDir, "standing-intent-statement-fault.mjs");
+  // Prototype interception also reaches statements prepared by the seed operation.
+  fs.writeFileSync(
+    fixturePath,
+    `import { StatementSync } from "node:sqlite";
+import { bindSqliteWorkerBackend as bind } from ${JSON.stringify(moduleUrl.href)};
+export function bindSqliteWorkerBackend(input, context) {
+  const backend = bind(input, context);
+  const action = ${JSON.stringify(action)};
+  const originals = new Map();
+  for (const method of ["run", "get", "all", "iterate"]) {
+    const original = StatementSync.prototype[method];
+    originals.set(method, original);
+    StatementSync.prototype[method] = function (...args) {
+      const sql = this.sourceSQL.toLowerCase().replaceAll('"', '');
+      const selected = action === 'create' || (action === 'match'
+        ? sql.includes('set fire_count =')
+        : args.includes(action === 'list' ? 'expired' : 'cancelled'));
+      if (selected && sql.startsWith(${JSON.stringify(`${operation} standing_intents `)})) {
+        throw new Error('fixture standing-intent write rejected');
+      }
+      return Reflect.apply(original, this, args);
+    };
+  }
+  return { ...backend, close() {
+    for (const [method, original] of originals) StatementSync.prototype[method] = original;
+    return backend.close();
+  } };
+}
+`,
+  );
+  const open = sqliteRuntime.openOpenClawAgentSqliteWorkerStore;
+  return vi
+    .spyOn(sqliteRuntime, "openOpenClawAgentSqliteWorkerStore")
+    .mockImplementation((options, source, worker) =>
+      open(
+        options,
+        source,
+        worker.moduleUrl.href === moduleUrl.href
+          ? { ...worker, moduleUrl: pathToFileURL(fixturePath) }
+          : worker,
+      ),
+    );
 }
 
 async function expectWaiting(work: Promise<unknown>, entered: Promise<void>) {
@@ -356,7 +400,7 @@ describe("standing-intent admitted operations", () => {
     "propagates rejected %s writes without changing rows",
     async (action) => {
       const existing = await seed(action === "list");
-      failStandingIntentWrites(action);
+      using _fault = failStandingIntentWrites(action);
       const held = await holdWriter();
       const execute = createStandingIntentExecutor({
         agentId: "main",
@@ -410,7 +454,7 @@ describe("standing-intent admitted operations", () => {
   it("keeps rejected prompt matching fail-open without spending its fire budget", async () => {
     const existing = await seed();
     const { runner, logger } = await registerHooks();
-    failStandingIntentWrites("match");
+    using _fault = failStandingIntentWrites("match");
     const held = await holdWriter();
     const work = keep(
       runner.runBeforePromptBuild(
@@ -423,6 +467,9 @@ describe("standing-intent admitted operations", () => {
     expect(readStored(existing.id)?.fire_count).toBe(0);
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("standing intent matching failed"),
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("fixture standing-intent write rejected"),
     );
   });
 
