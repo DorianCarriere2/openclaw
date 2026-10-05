@@ -571,7 +571,7 @@ export function abortChatRunById(
       liveTextGroup,
     });
   }
-  // Once execution starts, its owner publishes the terminal after fallback and cleanup settle.
+  // Once execution starts, its owner publishes the terminal after the fallback chain settles.
   if (active.executionStarted !== true) {
     emitAgentEvent({
       runId,

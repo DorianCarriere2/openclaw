@@ -412,6 +412,8 @@ export async function persistGatewaySessionLifecycleEvent(params: {
         expected &&
         (entry.sessionId !== expected.sessionId ||
           entry.lifecycleRevision !== expected.lifecycleRevision ||
+          // A terminal run can retain its transcript writer while cleanup finishes.
+          entry.lastRunId === expected.runId ||
           (entry.activeWriterRunId !== expected.runId && entry.lifecycleRunId !== expected.runId) ||
           (entry.activeWriterRunId !== undefined && entry.activeWriterRunId !== expected.runId) ||
           (entry.lifecycleRunId !== undefined && entry.lifecycleRunId !== expected.runId))

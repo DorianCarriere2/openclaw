@@ -703,3 +703,48 @@ it("keeps a suppressed lifecycle projection empty while preserving intentional f
     runtimeMs: undefined,
   });
 });
+
+it("preserves a runtime terminal committed before a delayed cancellation receipt", async () => {
+  const runId = "cancellation-race";
+  const entry: SessionEntry = {
+    sessionId: "cancellation-session",
+    lifecycleRevision: "revision-1",
+    updatedAt: 1_000,
+    status: "running",
+    lifecycleRunId: runId,
+    activeWriterRunId: runId,
+  };
+  persistenceMocks.loadSessionEntry.mockReturnValue({
+    storePath: "/tmp/sessions.json",
+    canonicalKey: "agent:main:cancellation-race",
+    entry,
+  });
+  const committed = {
+    ...entry,
+    lifecycleRunId: undefined,
+    lastRunId: runId,
+    status: "timeout" as const,
+    endedAt: 2_000,
+  };
+  persistenceMocks.updateSessionEntry.mockImplementation(
+    async (...args: Parameters<UpdateSessionEntry>) => {
+      const [, update] = args;
+      expect(await update(committed, { existingEntry: committed })).toBeNull();
+      return committed;
+    },
+  );
+  await persistGatewaySessionLifecycleEvent({
+    sessionKey: "agent:main:cancellation-race",
+    expectedWriter: {
+      runId,
+      sessionId: entry.sessionId,
+      lifecycleRevision: entry.lifecycleRevision,
+    },
+    event: {
+      runId,
+      sessionId: entry.sessionId,
+      ts: 3_000,
+      data: { phase: "end", status: "cancelled", aborted: true, stopReason: "rpc" },
+    },
+  });
+});

@@ -250,9 +250,8 @@ export function createChatSendDispatchErrorLifecycle(params: {
       activeRunAbort.entry?.projectSessionTerminalPersisted === true;
 
     if (abortedAtDispatchReject && abortMarkerAtDispatchReject !== undefined) {
-      // chat.abort has already emitted the canonical terminal lifecycle and
-      // retained its registration until that durable projection settles.
-      // A competing restart-admission write can strand an acknowledged abort.
+      // chat.abort has acknowledged cancellation. Admission or the started runtime
+      // owns its lifecycle projection; dispatch failure must not overwrite it.
       abortedDispatchMarker = abortMarkerAtDispatchReject;
       context.logGateway.warn(
         `chat.send post-dispatch threw after abort for runId=${clientRunId}: ${formatForLog(err)}`,

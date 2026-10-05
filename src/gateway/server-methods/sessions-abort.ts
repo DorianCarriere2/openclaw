@@ -499,9 +499,20 @@ export const sessionAbortHandlers: GatewayRequestHandlers = {
       try {
         await embeddedAbortPersistence;
         await Promise.all(
-          runIds.flatMap((runId) => {
+          runIds.map(async (runId) => {
             const entry = preAbortRuns.get(runId);
-            return entry ? [waitForChatAbortTerminalPersistence(entry)] : [];
+            if (!entry) {
+              return;
+            }
+            await waitForChatAbortTerminalPersistence(entry);
+            // Session Stop owns its durable receipt independently of runtime settlement.
+            if (entry.executionStarted === true) {
+              await persistSessionAbort({
+                runId,
+                sessionId: entry.sessionId,
+                startedAtMs: entry.startedAtMs,
+              });
+            }
           }),
         );
         if (persistedSessionId && pendingMcpController?.controller.signal.aborted) {
