@@ -3036,7 +3036,6 @@
 ["src/agents/models-config.providers.auth-provenance.test.ts","../plugins/provider-runtime.js","2e2c0cb9149a5559d440c841a4ee1f28b87761dab01a9ba852e9d04716a0bbe2",1]
 ["src/agents/models-config.providers.auth-provenance.test.ts","./provider-auth-aliases.js","db6c0e0d682f91e7cd9c0961699b572ecac396dc02399df1c11112a09330efce",1]
 ["src/agents/models-config.providers.catalog-context.test.ts","./auth-profiles/oauth.js","018742fe9f4a6e5b46ed51fe14b4c14df253034a5a3e89fd43441a4feb249a80",1]
-["src/agents/models-config.providers.catalog-context.test.ts","./provider-auth-aliases.js","da431204ef8264bc8075c71382cd6b8ccdabd713191a45873abe7ccd5e4aae16",1]
 ["src/agents/models-config.providers.implicit.discovery-scope.test.ts","../plugins/provider-discovery.js","56aecf70751173736a6356f3a4ad4f5843f2fffb403fb6f51c734025c578fdfc",1]
 ["src/agents/models-config.providers.implicit.outcomes.test.ts","../plugins/provider-discovery.runtime.js","baf75e23134f1e851bd2d7a228ed9162b71f98fa344973f6cbeef4bfcf9e2dbe",1]
 ["src/agents/models-config.runtime-source-snapshot.test.ts","../plugins/manifest-registry.js","90159f173b446f6ff8361259cd17d78e65d59fda0f7e7d34b60f004f62a5a8c1",1]

@@ -400,7 +400,11 @@ export async function withGatewaySessionStoreTarget<T>(
               sessionKeys: read.options.exactKeys ?? [],
               // Admission needs complete member rows; list-only readers need sharing identities.
               projection:
-                params.projection === "list" && !params.includeMembership ? "sharing" : "full",
+                typeof params.projection === "object" && !params.includeMembership
+                  ? "exact"
+                  : params.projection === "list" && !params.includeMembership
+                    ? "sharing"
+                    : "full",
               snapshotFields:
                 typeof params.projection === "object"
                   ? params.projection
@@ -429,10 +433,9 @@ export async function withGatewaySessionStoreTarget<T>(
                   ),
                 );
                 read.readSource = { agentId: owner.database.agentId, path: owner.database.path };
-                read.capturedReadSource = captureGatewaySessionReadSource(
-                  read.readSource,
-                  owner.result.databaseIdentity,
-                );
+                read.capturedReadSource =
+                  captureGatewaySessionReadSource(read.readSource, owner.result.databaseIdentity) ??
+                  read.capturedReadSource;
               }
               assertCurrent();
               const target = plan.resolve();
@@ -455,6 +458,12 @@ export async function withGatewaySessionStoreTarget<T>(
                     (read.agentId ?? identity.agentId) === input.agentId
                   ) {
                     scope.prepareSource(database, source);
+                    read.capturedReadSource = captureGatewaySessionReadSource(
+                      database,
+                      source.key.startsWith("file:")
+                        ? { identity: source.key.slice(5), birthtime: source.birthtime }
+                        : undefined,
+                    );
                   }
                 }
               },

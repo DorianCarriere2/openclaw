@@ -15,10 +15,12 @@ import {
   applyPendingSessionEntryOwnerChanges,
   pendingSessionEntryPublications,
   preparedSharingReads,
+  publishRetainedSessionEntryChange,
   recordCommittedSessionEntryPublication,
   recordCommittedSessionMetadataPublication,
   recordCommittedSessionOwnerPublication,
   retainedSharingReads,
+  stageSessionSharingPublication,
 } from "./session-accessor.sqlite-entry-cache-publication-state.js";
 import {
   publishTrackedCacheUpdate,
@@ -39,17 +41,18 @@ import {
   type SessionEntryCreationOperation,
   type SessionEntryPlaceholder,
   type SessionTranscriptInitializationPublication,
-  type SessionSharingEntry,
 } from "./session-accessor.sqlite-entry-cache.types.js";
 import {
   commitIncognitoSessionSharingFacts,
   commitIncognitoSessionSharingField,
   publishIncognitoSessionEntryChange,
-  stageIncognitoSharingPublication,
 } from "./session-accessor.sqlite-incognito-sharing.js";
 import { publishSessionEntryMaintenanceAgeChanges } from "./session-accessor.sqlite-maintenance-age.js";
 import {
+  projectSessionEntryPredicateChange,
+  publishRetainedSessionEntryPredicate,
   publishRetainedSessionGeneration,
+  revokePreparedSessionEntryPredicate,
   updateSessionSharingField,
   recordAcquiringSessionEntry,
   recordAcquiringSessionMember,
@@ -166,6 +169,9 @@ export function publishSessionEntryWorkerMetadataInvalidation(params: {
   sessionKey: string;
 }): void {
   invalidateSessionEntryCaches(params.databaseIdentity);
+  for (const read of retainedSharingReads(params.databaseIdentity, params.sessionKey) ?? []) {
+    publishRetainedSessionEntryPredicate(read, undefined, false);
+  }
   const change: SessionRowChange = {
     agentId: params.agentId,
     storePath: params.storePath,
@@ -326,6 +332,7 @@ export function publishSessionEntryPlaceholderInsertion(
         ? { entry: undefined, placeholder, membership: new Set() }
         : undefined;
       for (const read of retainedSharingReads(database, sessionKey) ?? []) {
+        revokePreparedSessionEntryPredicate(read);
         if (read.acquisition) {
           read.acquisition.invalidated = true;
         }
@@ -347,23 +354,6 @@ export function publishSessionEntryPlaceholderInsertion(
   });
 }
 
-function stageSessionSharingPublication(database: SessionEntryCacheDatabase, sessionKey: string) {
-  const releaseIncognito = !database.db.location()
-    ? stageIncognitoSharingPublication(database.db, sessionKey)
-    : undefined;
-  const reads = [...(retainedSharingReads(database, sessionKey) ?? [])];
-  const token = {};
-  for (const read of reads) {
-    read.pending.add(token);
-  }
-  return () => {
-    releaseIncognito?.();
-    for (const read of reads) {
-      read.pending.delete(token);
-    }
-  };
-}
-
 function publishSessionSharingFieldChange(
   database: SessionEntryCacheDatabase & { path: string },
   sessionKey: string,
@@ -376,6 +366,10 @@ function publishSessionSharingFieldChange(
         recordCommittedSessionOwnerPublication(database, sessionKey, change);
       }
       for (const read of retainedSharingReads(database, sessionKey) ?? []) {
+        if (change.kind === "owner" && read.predicate) {
+          const entry = projectSessionEntryPredicateChange(read.predicate, change);
+          publishRetainedSessionEntryPredicate(read, entry, entry !== undefined);
+        }
         if (read.acquisition) {
           if (change.kind === "member") {
             recordAcquiringSessionMember(read.acquisition, change);
@@ -389,7 +383,7 @@ function publishSessionSharingFieldChange(
       }
       commitIncognitoSessionSharingField(database.db, sessionKey, change);
     },
-    () => stageSessionSharingPublication(database, sessionKey),
+    () => stageSessionSharingPublication(database, sessionKey, change),
   );
 }
 
@@ -423,7 +417,7 @@ export function publishSessionSharingEntryChange(
   const sharingEntry = update.entry ? projectSessionSharingEntry(update.entry) : undefined;
   if (sharingUnchanged) {
     publishTrackedCacheUpdate(database, () =>
-      recordCommittedSessionMetadataPublication(database, update.sessionKey),
+      recordCommittedSessionMetadataPublication(database, update.sessionKey, facts, update.entry),
     );
   }
   const previousIdentity = update.previousEntry && {
@@ -440,6 +434,7 @@ export function publishSessionSharingEntryChange(
           sharingEntry,
           previousIdentity,
           sharingEntry !== undefined || facts?.kind === "removed",
+          update.entry,
         );
       },
       !incognito ? () => stageSessionSharingPublication(database, update.sessionKey) : undefined,
@@ -447,28 +442,6 @@ export function publishSessionSharingEntryChange(
   }
   if (incognito && !sharingUnchanged) {
     publishIncognitoSessionEntryChange(database, update);
-  }
-}
-
-function publishRetainedSessionEntryChange(
-  database: SessionEntryCacheDatabase | string,
-  sessionKey: string,
-  entry: SessionSharingEntry | undefined,
-  previousIdentity: Pick<SessionSharingEntry, "sessionId" | "lifecycleRevision"> | undefined,
-  known: boolean,
-): void {
-  recordCommittedSessionEntryPublication(database, sessionKey, entry);
-  for (const read of retainedSharingReads(database, sessionKey) ?? []) {
-    recordAcquiringSessionEntry(read.acquisition, entry, previousIdentity);
-    publishRetainedSessionGeneration(read, entry, known);
-    const previous = read.facts;
-    read.facts =
-      entry &&
-      previous?.entry &&
-      previous.entry.sessionId === entry.sessionId &&
-      previous.entry.lifecycleRevision === entry.lifecycleRevision
-        ? { entry, membership: previous.membership }
-        : undefined;
   }
 }
 
@@ -635,6 +608,15 @@ export function retainSessionEntryWorkerPublication(params: {
           creationSource.agentId === params.agentId &&
           creation.sessionKey === sessionKey;
         for (const read of preparedSharingReads.get(`${identityKey}\0${sessionKey}`) ?? []) {
+          if (placeholder) {
+            revokePreparedSessionEntryPredicate(read);
+          } else if (current(sessionKey) && !owner.metadataSuperseded.has(sessionKey)) {
+            publishRetainedSessionEntryPredicate(
+              read,
+              entry,
+              !unknown && replacement !== undefined,
+            );
+          }
           recordAcquiringSessionEntry(
             read.acquisition,
             !unknown && !membershipInvalidated.has(sessionKey) ? sharingEntry : undefined,
