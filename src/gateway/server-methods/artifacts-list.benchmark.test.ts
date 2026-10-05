@@ -1,15 +1,76 @@
 import fs from "node:fs/promises";
 import { performance } from "node:perf_hooks";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   replaceSessionEntry,
   replaceTranscriptEvents,
   waitForSessionTranscriptProjection,
 } from "../../config/sessions/session-accessor.js";
+import { historyLane } from "../../config/sessions/session-transcript-worker-resources.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { artifactsHandlers } from "./artifacts.js";
 import { createHistoryReadContext } from "./chat-history.test-helpers.js";
 import type { RespondFn } from "./types.js";
+
+it.each(["default", "custom"] as const)(
+  "retains the artifact history reader across authorized lists with a %s store",
+  async (store) => {
+    await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
+      const storePath =
+        store === "custom" ? state.statePath("custom", "sessions.sqlite") : undefined;
+      const config = {
+        agents: { entries: { main: {} } },
+        ...(storePath ? { session: { store: storePath } } : {}),
+      };
+      await state.writeConfig(config);
+      const scope = {
+        agentId: "main",
+        sessionKey: "agent:main:artifact-reader-lifetime",
+        sessionId: "artifact-reader-lifetime",
+        ...(storePath ? { storePath } : {}),
+      };
+      await replaceSessionEntry(scope, { sessionId: scope.sessionId, updatedAt: 1 });
+      await replaceTranscriptEvents(scope, [
+        { type: "session", version: 3, id: scope.sessionId },
+        {
+          type: "message",
+          id: "artifact",
+          parentId: null,
+          message: {
+            role: "assistant",
+            content: [{ type: "file", title: "result.txt", data: "aGVsbG8=" }],
+          },
+        },
+      ]);
+      await waitForSessionTranscriptProjection(scope);
+      const context = await createHistoryReadContext({ getRuntimeConfig: () => config });
+      const read = async () => {
+        const respond = vi.fn<RespondFn>();
+        await artifactsHandlers["artifacts.list"]!({
+          params: { sessionKey: scope.sessionKey },
+          context,
+          client: null,
+          req: { type: "req", id: "artifact-lifetime", method: "artifacts.list" },
+          isWebchatConnect: () => false,
+          respond,
+        });
+        expect(respond.mock.calls[0]?.[0]).toBe(true);
+        return respond.mock.calls[0]?.[1];
+      };
+      const first = await read();
+      expect(first).toMatchObject({
+        artifacts: [{ title: "result.txt", sizeBytes: 5, sessionKey: scope.sessionKey }],
+      });
+      const close = vi.spyOn(historyLane.pool, "closeResources");
+      try {
+        expect(await read()).toEqual(first);
+        expect(close).not.toHaveBeenCalled();
+      } finally {
+        close.mockRestore();
+      }
+    });
+  },
+);
 
 it.runIf(process.env.OPENCLAW_DB_WORKER_BENCH === "1")(
   "measures artifacts.list over 500 files and persisted transcript metadata",

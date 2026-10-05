@@ -64,6 +64,7 @@ import { withSessionStoreTarget } from "./session-store-target-runtime.js";
 import { resolveSessionTranscriptReadFence } from "./session-transcript-read-fence.js";
 import {
   maintenanceLane,
+  projectionLane,
   type SessionHistoryWorkerLane,
 } from "./session-transcript-worker-resources.js";
 import { withSessionHistoryWorkerDatabase } from "./session-transcript-worker-runtime.js";
@@ -540,6 +541,7 @@ export async function withSessionStoreReaderInWorker<T>(
   input: Omit<SessionStoreWorkerReadScope, "agentId"> & {
     agentId?: string;
     defaultAgentId?: string;
+    projection?: SessionEntryWorkerRead["projection"] | SessionEntryReadScope["projection"];
   },
   read: (source: SessionStoreWorkerReader) => Promise<T>,
   {
@@ -635,7 +637,7 @@ export async function withSessionStoreReaderInWorker<T>(
           (!logical || item.owner.receipt.agentId === database.agentId),
       )?.owner;
       return withSessionHistoryWorkerDatabase(
-        { ...database, env },
+        { ...database, requestedPaths: [storePath, sourcePath], env },
         async (reader) => {
           const sourceIdentity = prepareSource
             ? readDatabasePathIdentitySync(database.path)
@@ -715,7 +717,7 @@ export async function withSessionStoreReaderInWorker<T>(
             assertFinalCurrent();
             return value;
           }),
-        { lane },
+        { lane: lane ?? (input.projection === "sharing" ? projectionLane : undefined) },
       );
     }
     // Only returned data may be refused after cleanup; synchronous consumers can already publish.

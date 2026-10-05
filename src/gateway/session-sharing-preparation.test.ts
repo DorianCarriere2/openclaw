@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it, vi } from "vitest";
 import { observeHostDataSql } from "../../test/helpers/sqlite-statement-execution-counter.js";
 import { setRuntimeConfigSnapshot } from "../config/config.js";
@@ -890,6 +891,50 @@ it("requires an existing session before preparing sharing facts", async () => {
     }
   });
 });
+
+it.each(["configured", "selected"] as const)(
+  "closes the retained sharing reader through its %s store path",
+  async (locator) => {
+    await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
+      const storePath = state.statePath("physical.sqlite");
+      const selectedPath = state.statePath("custom.sqlite");
+      const configuredPath = state.statePath("custom.json");
+      const sessionKey = "agent:main:sharing-alias-close";
+      replaceSessionEntrySync(
+        { agentId: "main", sessionKey, storePath },
+        { sessionId: "sharing-alias-close", updatedAt: 1 },
+      );
+      await closeOpenClawAgentDatabaseByPathAsync(storePath, "main");
+      fs.symlinkSync(storePath, selectedPath, "file");
+      const cfg = {
+        agents: { entries: { main: {} } },
+        session: { store: configuredPath },
+      };
+      await state.writeConfig(cfg);
+      setRuntimeConfigSnapshot(cfg);
+      const prepared = await prepareSessionMutationFacts({ cfg, sessionKey, agentId: "main" });
+      try {
+        expect(prepared.readCurrent(cfg).target.entry.sessionId).toBe("sharing-alias-close");
+      } finally {
+        prepared.release();
+      }
+      const claimSoleCustody = () => {
+        const raw = new DatabaseSync(storePath);
+        try {
+          raw.exec("PRAGMA busy_timeout=0; PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE; COMMIT");
+        } finally {
+          raw.close();
+        }
+      };
+      expect(claimSoleCustody).toThrow(/database is locked/);
+      await closeOpenClawAgentDatabaseByPathAsync(
+        locator === "configured" ? configuredPath : selectedPath,
+        "main",
+      );
+      expect(claimSoleCustody).not.toThrow();
+    });
+  },
+);
 
 it.each(["directory", "custom-family", "same path"] as const)(
   "does not transfer prepared sharing facts through a %s replacement",
