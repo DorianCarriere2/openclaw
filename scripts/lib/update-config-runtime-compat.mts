@@ -120,7 +120,7 @@ function childEnv(operation, args, options) {
   if (process.env.OPENCLAW_CONFIG_READ_CHILD === "1") {
     const error = new Error("A config reader child cannot launch another reader.");
     error.code = "candidate-config-read-recursion";
-    console.error("[update:warning:" + error.code + "] " + error.message);
+    console.warn("[update:warning:" + error.code + "] " + error.message);
     throw error;
   }
   const selected = options?.env ?? (operation === "readCurrentConfigForPolicyCheck" ? args[0]?.env : undefined) ?? process.env;
@@ -138,7 +138,7 @@ function finish(code, output, logger) {
   if (code === 0 && result?.ok === true) return result.value;
   const error = new Error("Candidate config read failed; the existing service definition was left unchanged. Retry with the updated CLI.");
   error.code = "candidate-config-read-failed";
-  console.error("[update:warning:" + error.code + "] " + error.message);
+  console.warn("[update:warning:" + error.code + "] " + error.message);
   throw error;
 }
 function readSync(operation, args = [], options, factory = false) {
