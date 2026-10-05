@@ -25,10 +25,7 @@ import {
   toDatabaseOptions,
 } from "../config/sessions/session-accessor.sqlite-scope.js";
 import * as sessionLifecycle from "../sessions/session-lifecycle-admission.js";
-import {
-  runExclusiveSessionLifecycleMutation,
-  SESSION_WORK_ADMISSION_DRAIN_TIMEOUT_MS,
-} from "../sessions/session-lifecycle-admission.js";
+import { runExclusiveSessionLifecycleMutation } from "../sessions/session-lifecycle-admission.js";
 import { observeSessionWorkAdmissionDrain } from "../sessions/session-lifecycle-admission.test-support.js";
 import {
   closeOpenClawAgentDatabasesForTest,
@@ -38,19 +35,15 @@ import {
   ensureSessionInputCompletionsSchema,
   ensureSessionPendingInputsSchema,
 } from "../state/openclaw-agent-pending-inputs-schema.js";
-import {
-  createGatewaySchedulerClock,
-  createTestGatewayScheduler,
-} from "../test-utils/gateway-scheduler-clock.js";
 import { setAbortedAgentDedupeEntries } from "./agent-turn/agent-dedupe.js";
 import * as agentJobs from "./agent-turn/agent-job.js";
-import { waitForChatAbortControllerRemoval } from "./chat-abort-lifecycle-internal.js";
 import { abortChatRunById, type ChatAbortControllerEntry } from "./chat-abort.js";
 import { refusePendingInputCommit } from "./pending-input-commit.test-support.js";
 import { dispatchGatewayMethodInProcess } from "./server-plugin-in-process-dispatch.js";
 import { startGatewayServerHarness, type GatewayServerHarness } from "./server.e2e-ws-harness.js";
 import { holdMetadataThroughSubagentStop } from "./server.private-completion.metadata-overlap.test-support.js";
 import { registerSessionsSendPrivateCompletionTests } from "./server.private-completion.sessions-send.test-support.js";
+import { registerPrivateCompletionTimeoutTests } from "./server.private-completion.timeout.test-support.js";
 import * as lifecycleState from "./session-lifecycle-state.js";
 import { loadSessionEntry } from "./session-utils.js";
 import {
@@ -881,147 +874,14 @@ describe("private subagent completion processing receipts", () => {
     },
   );
 
-  it.each(["resolved", "rejected", "abandoned"] as const)(
-    "preserves executing private timeout facts (%s)",
-    async (kind) => {
-      const consumed = createDeferred<ReturnType<typeof recorder>>();
-      const release = createDeferred();
-      agentCommandMock.mockImplementationOnce(async (input) => {
-        const command = input as AgentCommandOpts;
-        await command.onExecutionStarted?.();
-        const inputRecorder = recorder(input);
-        await inputRecorder.persistApproved();
-        inputRecorder.markSentToProvider?.();
-        consumed.resolve(inputRecorder);
-        // Hold the producer after abort so lifecycle projection cannot stand
-        // in for execution settlement; abandoned work also outlives the grace.
-        await release.promise;
-        if (kind === "rejected") {
-          command.abortSignal!.throwIfAborted();
-        }
-        return {
-          payloads: [],
-          meta: {
-            durationMs: 1,
-            aborted: true,
-            stopReason: "timeout",
-            timeoutPhase: "provider",
-            providerStarted: true,
-          },
-        };
-      });
-      const first = dispatch();
-      const observed = first.then(
-        (value) => ({ value }),
-        (error: unknown) => ({ error: String(error) }),
-      );
-      const inputRecorder = await consumed.promise;
-      const active = expectDefined(
-        kernel.gatewayRequestContext.chatAbortControllers.get(runId),
-        "executing controller",
-      );
-      expect(active.executionStarted).toBe(true);
-      const releaseTerminalWrite = createDeferred();
-      let terminalWrite: Promise<void> | undefined;
-      const persistLifecycle = lifecycleState.persistGatewaySessionLifecycleEvent;
-      const delayedTerminalWrite =
-        kind === "abandoned"
-          ? vi
-              .spyOn(lifecycleState, "persistGatewaySessionLifecycleEvent")
-              .mockImplementation((params) => {
-                if (params.event.runId !== runId) {
-                  return persistLifecycle(params);
-                }
-                terminalWrite = releaseTerminalWrite.promise.then(() => persistLifecycle(params));
-                return terminalWrite;
-              })
-          : undefined;
-      active.expiresAtMs = Date.now() - 1;
-      const { startGatewayMaintenanceTimers } = await import("./server-maintenance.js");
-      const { createGatewayMaintenanceStateForTest } =
-        await import("./test-helpers.maintenance-state.js");
-      const clock = createGatewaySchedulerClock(Date.now());
-      const now = vi.spyOn(Date, "now").mockImplementation(clock.clock.now);
-      const timers = startGatewayMaintenanceTimers({
-        ...createGatewayMaintenanceStateForTest(),
-        ...kernel.gatewayRequestContext,
-        scheduler: createTestGatewayScheduler(clock.clock),
-        logHealth: { info: vi.fn(), error: vi.fn() },
-        runWorktreeGc: async () => undefined,
-        runDeliveryQueueMediaGc: async () => undefined,
-        runManagedOutgoingMediaGc: async () => undefined,
-      });
-      try {
-        await clock.advanceBy(60_000);
-        expect(active.controller.signal.aborted).toBe(true);
-        expect(active.abortStopReason).toBe("timeout");
-        expect(kernel.gatewayRequestContext.chatAbortControllers.get(runId)).toBe(active);
-        expect(completions()).toEqual([]);
-        if (kind === "abandoned") {
-          // Keep the real terminal write and raw execution pending through timeout settlement.
-          expect(terminalWrite).toBeInstanceOf(Promise);
-          await clock.advanceBy(60_000);
-          await awaitGateBeforeSettlement(
-            expectDefined(inputRecorder.waitForPendingInputSettlement?.(), "input settlement"),
-            expectDefined(active.projectSessionTerminalPersistence, "terminal persistence"),
-            "Terminal persistence settled before its held write was released",
-          );
-          expect(kernel.gatewayRequestContext.chatAbortControllers.get(runId)).toBe(active);
-          expect(active.executionSettlement?.status).toBe("pending");
-          expect(active.projectSessionTerminalPending).toBe(true);
-          expect(JSON.parse(String(completions()[0]?.outcome_json))).toMatchObject({
-            reason: "timed_out",
-            status: "timeout",
-            stopReason: "timeout",
-          });
-        }
-      } finally {
-        await timers.stopPeriodicTasks();
-        await timers.skillUsageCleanup();
-        now.mockRestore();
-        releaseTerminalWrite.resolve();
-        release.resolve();
-        try {
-          await terminalWrite;
-        } finally {
-          delayedTerminalWrite?.mockRestore();
-        }
-      }
-      const response = await observed;
-      const rows = completions();
-      const outcome = JSON.parse(String(rows[0]?.outcome_json));
-      expect(response).toMatchObject({ value: { status: "timeout", stopReason: "timeout" } });
-      expect(outcome).toMatchObject({ status: "timeout", stopReason: "timeout" });
-      expect(
-        await waitForChatAbortControllerRemoval({
-          entries: kernel.gatewayRequestContext.chatAbortControllers,
-          targets: [{ runId, entry: active }],
-          timeoutMs: SESSION_WORK_ADMISSION_DRAIN_TIMEOUT_MS,
-        }),
-      ).toBe(true);
-      expect(kernel.gatewayRequestContext.chatAbortControllers.has(runId)).toBe(false);
-      expect(active.projectSessionTerminalPersisted).toBe(true);
-      if (kind === "resolved") {
-        expect(outcome).toMatchObject({
-          reason: "hard_timeout",
-          timeoutPhase: "provider",
-          providerStarted: true,
-        });
-        expect(response).toMatchObject({
-          value: { timeoutPhase: "provider", providerStarted: true },
-        });
-      } else {
-        expect(outcome.reason).toBe("timed_out");
-        expect(outcome.timeoutPhase).toBeUndefined();
-        expect(outcome.providerStarted).toBeUndefined();
-      }
-      kernel.gatewayRequestContext.dedupe.delete(`agent:${runId}`);
-      agentCommandMock.mockImplementationOnce(async (input) => {
-        await recorder(input).persistApproved();
-        return { payloads: [], meta: { durationMs: 1 } };
-      });
-      expect(await dispatch()).toMatchObject({ status: "ok", inputProcessingCompleted: true });
-      expect(agentCommandMock).toHaveBeenCalledTimes(2);
-    },
-  );
+  registerPrivateCompletionTimeoutTests(() => ({
+    context: kernel.gatewayRequestContext,
+    sessionKey,
+    sessionId,
+    runId,
+    recorder,
+    dispatch,
+    completions,
+    agentCommandMock,
+  }));
 });
