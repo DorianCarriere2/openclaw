@@ -22,7 +22,8 @@ const { sendZaloTextMock } = vi.hoisted(() => ({
   sendZaloTextMock: vi.fn(),
 }));
 
-vi.mock("./channel.runtime.js", () => ({
+vi.mock("./channel.runtime.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./channel.runtime.js")>()),
   sendMessageZalo: sendZaloTextMock,
 }));
 
