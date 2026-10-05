@@ -1,7 +1,13 @@
+import { isDeepStrictEqual } from "node:util";
 import { isPromiseLike } from "@openclaw/normalization-core/promise-like";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { SqliteWorkerError } from "../../infra/sqlite-worker-contract.js";
 import type { SqliteWorkerAdmissionRequest } from "../../infra/sqlite-worker-operation-admission.js";
+import {
+  createSqliteWorkerTransferReceiver,
+  type SqliteWorkerTransferFrame,
+  type SqliteWorkerTransferHandle,
+} from "../../infra/sqlite-worker-transfer.js";
 import type {
   IncognitoSessionAuthority,
   IncognitoSessionFacts,
@@ -13,27 +19,94 @@ import type { IncognitoEntryPatchOperations } from "./session-incognito-entry-pa
 export type IncognitoEntryOperations = IncognitoEntryCreationOperations &
   IncognitoEntryPatchOperations;
 
+export function readIncognitoGrantFacts(
+  received: unknown,
+  identity: IncognitoSessionFacts["identity"],
+): IncognitoSessionFacts[] {
+  if (
+    !Array.isArray(received) ||
+    received.some(
+      (facts: unknown) =>
+        !isRecord(facts) ||
+        !isDeepStrictEqual(facts.identity, identity) ||
+        typeof facts.sessionKey !== "string" ||
+        !Number.isSafeInteger(facts.revision),
+    )
+  ) {
+    throw new Error("Incognito session grant differs from its captured target");
+  }
+  // SAFETY: The paired kernel supplies these actor-bound publication facts.
+  return received as IncognitoSessionFacts[];
+}
+
 /** Entry receipts publish the paired kernel's acknowledged result without replay. */
 export function incognitoEntryPublication<Key extends keyof IncognitoEntryOperations>(
   type: Key,
   authorizePrepared?: () => void,
 ) {
+  let receiver: ReturnType<typeof createSqliteWorkerTransferReceiver> | undefined;
+  let transferId: number | undefined;
+  let completed = false;
+  let candidate: IncognitoSessionOperations[Key]["output"] | undefined;
   return {
     factsKey: "entry" as const,
+    prepare(facts: unknown) {
+      if (isRecord(facts) && facts.kind === "session-entry-patch-transfer") {
+        if (
+          receiver ||
+          !isRecord(facts.handle) ||
+          typeof facts.handle.id !== "number" ||
+          !Number.isSafeInteger(facts.handle.id) ||
+          facts.handle.id < 1 ||
+          !Array.isArray(facts.handle.kinds) ||
+          facts.handle.kinds.length !== 1 ||
+          facts.handle.kinds[0] !== "patch"
+        ) {
+          throw new Error("Incognito entry returned an invalid publication transfer");
+        }
+        // SAFETY: The paired kernel supplies the validated transfer descriptor.
+        const handle = facts.handle as SqliteWorkerTransferHandle;
+        transferId = handle.id;
+        receiver = createSqliteWorkerTransferReceiver(handle, (record) => {
+          if (
+            candidate ||
+            record.kind !== "patch" ||
+            !isRecord(record.value) ||
+            record.value.kind !== "incognito-entry" ||
+            !Array.isArray(record.value.facts) ||
+            !isRecord(record.value.value)
+          ) {
+            throw new Error("Incognito entry returned an invalid publication candidate");
+          }
+          // SAFETY: The command's paired kernel transfers its result and exact commit facts.
+          candidate = record.value as IncognitoSessionOperations[Key]["output"];
+        });
+      } else if (isRecord(facts) && facts.kind === "session-entry-patch-frame" && receiver) {
+        // SAFETY: The receiver validates frame identity, ordering, bounds, and completion.
+        completed = receiver.accept(facts.frame as SqliteWorkerTransferFrame) !== undefined;
+      } else {
+        throw new Error("Incognito entry returned unexpected publication facts");
+      }
+    },
     authorize(_stage: "transaction" | "commit", facts: unknown) {
       if (isRecord(facts) && facts.guarded === true) {
         authorizePrepared?.();
       }
     },
     decodeReceipt(receipt: unknown): IncognitoSessionOperations[Key]["output"] {
-      if (!isRecord(receipt) || !Array.isArray(receipt.facts) || !isRecord(receipt.value)) {
+      if (
+        !completed ||
+        !candidate ||
+        !isRecord(receipt) ||
+        receipt.kind !== "session-entry-patch-committed" ||
+        receipt.transferId !== transferId
+      ) {
         throw new SqliteWorkerError(
           `Incognito ${type} omitted its committed receipt`,
           "outcome-unknown",
         );
       }
-      // SAFETY: The paired kernel sends this command's result; facts must match its exact grant.
-      return receipt as IncognitoSessionOperations[Key]["output"];
+      return candidate;
     },
   };
 }

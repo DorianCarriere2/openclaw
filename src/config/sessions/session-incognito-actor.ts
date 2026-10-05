@@ -16,6 +16,7 @@ import {
   authorizeSessionFacts,
   incognitoEntryPublication,
   isIncognitoEntryValidationGrant,
+  readIncognitoGrantFacts,
   type IncognitoEntryOperations,
 } from "./session-incognito-admission.js";
 import {
@@ -183,6 +184,7 @@ export function createIncognitoSessionFacts(
         cleanup = false,
         publication?: {
           factsKey?: "entry";
+          prepare?(facts: unknown): void;
           authorize(stage: "transaction" | "commit", facts: unknown): void;
           decodeReceipt(facts: unknown): IncognitoSessionOperations[Key]["output"];
         },
@@ -319,6 +321,12 @@ export function createIncognitoSessionFacts(
                 ) {
                   throw new Error("Incognito session operation belongs to another actor");
                 }
+                if (request.stage === "prepare" && request.facts.entry !== undefined) {
+                  if (phase !== "transaction" || !publication?.prepare) {
+                    throw new Error("Incognito entry publication requested out of order");
+                  }
+                  publication.prepare(request.facts.entry);
+                }
                 if (
                   request.stage !== "prepare" ||
                   (!changing && request.facts.sessions !== undefined)
@@ -339,21 +347,12 @@ export function createIncognitoSessionFacts(
                   ) {
                     throw new Error("Incognito session authority requested out of order");
                   }
-                  const received = request.facts.sessions;
-                  if (
-                    !Array.isArray(received) ||
-                    received.some(
-                      (facts: unknown) =>
-                        !isRecord(facts) ||
-                        !isDeepStrictEqual(facts.identity, identity) ||
-                        typeof facts.sessionKey !== "string" ||
-                        !Number.isSafeInteger(facts.revision),
-                    )
-                  ) {
-                    throw new Error("Incognito session grant differs from its captured target");
-                  }
-                  // SAFETY: the private, typed worker sends these bounded publication envelopes.
-                  const facts = received as IncognitoSessionFacts[];
+                  const received =
+                    request.facts.sessions ??
+                    (request.stage === "commit" && publication?.factsKey === "entry"
+                      ? publication.decodeReceipt(request.facts.entry).facts
+                      : undefined);
+                  const facts = readIncognitoGrantFacts(received, identity);
                   const keys = facts.map((entry) => entry.sessionKey);
                   const lifecycleKeys = isIncognitoLifecycleCommand(captured)
                     ? incognitoLifecycleKeys(captured, identity)
