@@ -19,6 +19,7 @@ import { loadOrCreateDeviceIdentity } from "../infra/device-identity.js";
 import { readPersistedMediaFacts } from "../media/media-facts.js";
 import { resolveInboundMediaReference } from "../media/media-reference.js";
 import { createDeferredCore, type Deferred } from "../shared/deferred.js";
+import { captureOpenClawAgentDatabaseExecution } from "../state/openclaw-agent-execution.js";
 import { readUserProfileIdentity } from "../state/user-profile-list.js";
 import { linkEmail, setUserProfileRole } from "../state/user-profile-writes.worker.js";
 import { ensureProfileForEmail } from "../state/user-profiles.js";
@@ -135,6 +136,7 @@ it(
         response.writeHead(500).end("fixture provider failed");
       });
     });
+    const agentExecutions: Array<{ release(): Promise<void> }> = [];
     let gateway: Awaited<ReturnType<typeof startGatewayWithClient>> | undefined;
     let administrator: Awaited<ReturnType<typeof connectGatewayClient>> | undefined;
     let backingClient: Awaited<ReturnType<typeof connectGatewayClient>> | undefined;
@@ -241,6 +243,10 @@ it(
         scopes: ["operator.read", "operator.write"],
       });
       await gateway.server.startupSettled;
+      // Keep both fixture agents resident while alternating owners; the runtime retains one idle executor.
+      for (const agentId of ["main", "work"]) {
+        agentExecutions.push(captureOpenClawAgentDatabaseExecution({ agentId, env: state.env }));
+      }
       administrator = await connectGatewayClient({
         url: `wss://127.0.0.1:${gateway.port}`,
         clientName: GATEWAY_CLIENT_NAMES.CONTROL_UI,
@@ -690,8 +696,15 @@ it(
           }
         } finally {
           if (gateway) {
-            await disconnectGatewayClient(gateway.client);
-            await gateway.server.close({ reason: "membership authority proof complete" });
+            try {
+              await disconnectGatewayClient(gateway.client);
+            } finally {
+              try {
+                await Promise.all(agentExecutions.map((execution) => execution.release()));
+              } finally {
+                await gateway.server.close({ reason: "membership authority proof complete" });
+              }
+            }
           }
         }
       } finally {
