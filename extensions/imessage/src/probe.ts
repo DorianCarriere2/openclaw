@@ -204,9 +204,9 @@ export async function probeIMessagePrivateApi(
     const rawSelectors = payload?.selectors;
     const selectors: Record<string, boolean> = {};
     if (rawSelectors && typeof rawSelectors === "object" && !Array.isArray(rawSelectors)) {
-      for (const [key, value] of Object.entries(rawSelectors)) {
+      for (const [selector, value] of Object.entries(rawSelectors)) {
         if (typeof value === "boolean") {
-          selectors[key] = value;
+          selectors[selector] = value;
         }
       }
     }

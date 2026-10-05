@@ -444,7 +444,7 @@ export async function deliverCommentThreadText(
         }),
       );
       const comment = response.data?.items?.find(
-        (comment) => comment.comment_id?.trim() === params.comment_id,
+        (item) => item.comment_id?.trim() === params.comment_id,
       );
       isWholeComment = comment?.is_whole === true;
     } catch (error) {

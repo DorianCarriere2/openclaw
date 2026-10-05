@@ -177,7 +177,7 @@ export async function monitorTwitchProvider(options: TwitchMonitorOptions) {
                 }),
                 deliver: async (payload) => {
                   try {
-                    const clientManager = getOrCreateClientManager(accountId, {
+                    const replyClientManager = getOrCreateClientManager(accountId, {
                       info: (msg) => runtime.log?.(msg),
                       warn: (msg) => runtime.log?.(msg),
                       error: (msg) => runtime.error?.(msg),
@@ -192,7 +192,7 @@ export async function monitorTwitchProvider(options: TwitchMonitorOptions) {
                       cfg: config,
                       account,
                       accountId,
-                      clientManager,
+                      clientManager: replyClientManager,
                     });
                     if (result.outcome === "not_sent") {
                       runtime.error?.(`No text to send in reply payload`);
