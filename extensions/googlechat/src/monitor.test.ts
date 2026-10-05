@@ -42,7 +42,7 @@ const routingMocks = vi.hoisted(() => ({
 
 const inboundMocks = vi.hoisted(() => ({
   buildEnvelope: vi.fn(({ body }: { body: string }) => body),
-  resolveChannelInboundRouteEnvelope: vi.fn(),
+  prepareChannelInboundRouteEnvelope: vi.fn(),
   toInboundMediaFactsWithMetadata: vi.fn(),
 }));
 
@@ -53,7 +53,7 @@ vi.mock("openclaw/plugin-sdk/channel-inbound", async (importOriginal) => {
   );
   return {
     ...actual,
-    resolveChannelInboundRouteEnvelope: inboundMocks.resolveChannelInboundRouteEnvelope,
+    prepareChannelInboundRouteEnvelope: inboundMocks.prepareChannelInboundRouteEnvelope,
     toInboundMediaFactsWithMetadata: inboundMocks.toInboundMediaFactsWithMetadata,
   };
 });
@@ -91,7 +91,7 @@ beforeEach(() => {
   apiMocks.updateGoogleChatMessage.mockReset().mockResolvedValue({});
   accessMocks.applyGoogleChatInboundAccessPolicy.mockReset();
   inboundMocks.buildEnvelope.mockReset().mockImplementation(({ body }: { body: string }) => body);
-  inboundMocks.resolveChannelInboundRouteEnvelope
+  inboundMocks.prepareChannelInboundRouteEnvelope
     .mockReset()
     .mockImplementation(({ accountId }: { accountId: string }) => ({
       route: {
@@ -289,7 +289,7 @@ describe("googlechat monitor inbound space classification", () => {
     expect(accessMocks.applyGoogleChatInboundAccessPolicy).toHaveBeenCalledWith(
       expect.objectContaining({ isGroup }),
     );
-    expect(inboundMocks.resolveChannelInboundRouteEnvelope).toHaveBeenCalledWith({
+    expect(inboundMocks.prepareChannelInboundRouteEnvelope).toHaveBeenCalledWith({
       cfg: {},
       channel: "googlechat",
       accountId: "work",

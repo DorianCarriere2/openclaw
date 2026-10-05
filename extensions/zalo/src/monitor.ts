@@ -2,7 +2,7 @@ import { logTypingFailure } from "openclaw/plugin-sdk/channel-feedback";
 import {
   createChannelPartialDeliveryError,
   formatInboundMediaUnavailableText,
-  resolveChannelInboundRouteEnvelope,
+  prepareChannelInboundRouteEnvelope,
   type ChannelInboundMediaInput,
 } from "openclaw/plugin-sdk/channel-inbound";
 import type {
@@ -472,7 +472,7 @@ async function processMessageWithPipeline(params: ZaloMessagePipelineParams): Pr
   const { isGroup, chatId, senderId, senderName, rawBody } = authorization;
   const agentBody = agentBodyOverride ?? rawBody;
 
-  const { route, buildEnvelope } = resolveChannelInboundRouteEnvelope({
+  const { route, buildEnvelope } = await prepareChannelInboundRouteEnvelope({
     cfg: config,
     channel: "zalo",
     accountId: account.accountId,

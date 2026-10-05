@@ -283,7 +283,7 @@ export function createAgentTurnService(
       }
 
       if (requestedSessionKey) {
-        const preparedSession = prepareAgentSession({
+        const preparedSession = await prepareAgentSession({
           cfg,
           requestedSessionKey,
           requestedSessionId,
@@ -296,6 +296,7 @@ export function createAgentTurnService(
           effectiveBootstrapContextRunKind,
           preAttachmentSession,
           respond,
+          assertCurrent: assertRequestCurrent,
         });
         if (!preparedSession) {
           return;

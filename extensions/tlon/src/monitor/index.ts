@@ -1,6 +1,6 @@
 import { resolveHumanDelayConfig } from "openclaw/plugin-sdk/agent-runtime";
 import {
-  createChannelInboundEnvelopeBuilder,
+  prepareChannelInboundEnvelopeBuilder,
   formatInboundMediaUnavailableText,
 } from "openclaw/plugin-sdk/channel-inbound";
 import type {
@@ -464,7 +464,8 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts): Promise<void> 
 
     const promptMedia = buildTlonInboundMediaPrompt(messageText, attachments);
 
-    const body = createChannelInboundEnvelopeBuilder({ cfg, route })({
+    const buildEnvelope = await prepareChannelInboundEnvelopeBuilder({ cfg, route });
+    const body = buildEnvelope({
       channel: "Tlon",
       from: fromLabel,
       timestamp,
@@ -479,7 +480,6 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts): Promise<void> 
             notice: `[tlon ${unavailableMediaCount > 1 ? `${unavailableMediaCount} attachments` : "attachment"} unavailable]`,
           })
         : commandBody;
-    const tlonConversationId = isGroup ? (channelNest ?? senderShip) : senderShip;
     const ctxPayload = core.channel.inbound.buildContext({
       channel: "tlon",
       accountId: route.accountId,
@@ -493,7 +493,7 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts): Promise<void> 
       },
       conversation: {
         kind: isGroup ? "group" : "direct",
-        id: tlonConversationId,
+        id: isGroup ? (channelNest ?? senderShip) : senderShip,
         label: fromLabel,
       },
       route: {

@@ -11,6 +11,7 @@ import {
   type ResolvedAgentRoute,
   type ResolveAgentRouteInput,
 } from "../../routing/resolve-route.js";
+import { prepareInboundSessionEnvelopeContext } from "../session-envelope.js";
 
 export type ChannelInboundEnvelopeInput = Omit<AgentEnvelopeParams, "previousTimestamp"> & {
   previousTimestamp?: AgentEnvelopeParams["previousTimestamp"] | null;
@@ -43,6 +44,33 @@ export function resolveChannelInboundRouteEnvelope(params: ResolveAgentRouteInpu
   return {
     route,
     buildEnvelope: createChannelInboundEnvelopeBuilder({ cfg: params.cfg, route }),
+  };
+}
+
+/** Returned formatters use the timestamp prepared by the existing session reader. */
+export async function prepareChannelInboundEnvelopeBuilder(
+  params: Parameters<typeof createChannelInboundEnvelopeBuilder>[0],
+) {
+  const format = createChannelInboundEnvelopeBuilder(params);
+  const { previousTimestamp } = await prepareInboundSessionEnvelopeContext({
+    cfg: params.cfg,
+    ...params.route,
+  });
+  return (input: ChannelInboundEnvelopeInput): string =>
+    format({
+      ...input,
+      previousTimestamp:
+        input.previousTimestamp === undefined
+          ? (previousTimestamp ?? null)
+          : input.previousTimestamp,
+    });
+}
+
+export async function prepareChannelInboundRouteEnvelope(params: ResolveAgentRouteInput) {
+  const route = resolveAgentRoute(params);
+  return {
+    route,
+    buildEnvelope: await prepareChannelInboundEnvelopeBuilder({ cfg: params.cfg, route }),
   };
 }
 

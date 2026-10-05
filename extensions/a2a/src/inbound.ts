@@ -1,6 +1,6 @@
 import {
   buildChannelInboundEventContext,
-  resolveChannelInboundRouteEnvelope,
+  prepareChannelInboundRouteEnvelope,
 } from "openclaw/plugin-sdk/channel-inbound";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { isReplyPayloadTerminalContent } from "openclaw/plugin-sdk/reply-payload";
@@ -31,7 +31,7 @@ export async function dispatchA2aInbound(params: A2aInboundDispatchParams): Prom
       );
       return;
     }
-    const { route, buildEnvelope } = resolveChannelInboundRouteEnvelope({
+    const { route, buildEnvelope } = await prepareChannelInboundRouteEnvelope({
       cfg: params.config,
       channel: "a2a",
       accountId: params.account.accountId,

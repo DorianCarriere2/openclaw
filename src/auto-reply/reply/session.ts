@@ -18,7 +18,6 @@ import { resolveGroupSessionKey } from "../../config/sessions/group.js";
 import {
   hasTerminalMainSessionTranscriptNewerThanRegistry,
   isRestartRecoveryTombstone,
-  resolveSessionLifecycleTimestamps,
   resolveSessionWorkStartError,
 } from "../../config/sessions/lifecycle.js";
 import { canonicalizeMainSessionAlias } from "../../config/sessions/main-session.js";
@@ -659,12 +658,7 @@ async function initSessionStateAttemptLocked(
   const lockedModelSelection = isModelSelectionLocked(entry);
   const skipImplicitExpiry =
     lockedModelSelection || (hasProviderOwnedSession(entry) && resetPolicy.configured !== true);
-  const lifecycleTimestamps = resolveSessionLifecycleTimestamps({
-    entry,
-    agentId,
-    sessionKey,
-    storePath,
-  });
+  const lifecycleTimestamps = initializationSnapshot.lifecycleTimestamps;
   const entryFreshness = entry
     ? skipImplicitExpiry
       ? ({ fresh: true } satisfies SessionFreshness)

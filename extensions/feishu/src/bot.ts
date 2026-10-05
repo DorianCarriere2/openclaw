@@ -28,7 +28,10 @@ import {
   warnMissingProviderGroupPolicyFallbackOnce,
 } from "openclaw/plugin-sdk/runtime-group-policy";
 import { resolvePinnedMainDmOwnerFromAllowlist } from "openclaw/plugin-sdk/security-runtime";
-import { resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
+import {
+  readSessionUpdatedAtAsync,
+  resolveStorePath,
+} from "openclaw/plugin-sdk/session-store-runtime";
 import { normalizeOptionalString, uniqueStrings } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import {
@@ -1171,9 +1174,8 @@ export async function handleFeishuMessage(params: {
         return threadContext;
       }
 
-      const storePath = resolveStorePath(cfg.session?.store, { agentId });
-      const previousThreadSessionTimestamp = core.channel.session.readSessionUpdatedAt({
-        storePath,
+      const previousThreadSessionTimestamp = await readSessionUpdatedAtAsync({
+        storePath: resolveStorePath(cfg.session?.store, { agentId }),
         sessionKey: agentSessionKey,
       });
       if (previousThreadSessionTimestamp) {
@@ -1205,9 +1207,6 @@ export async function handleFeishuMessage(params: {
         );
         rootMsg = null;
       }
-      if (feishuThreadId) {
-        log(`feishu[${account.accountId}]: resolved thread ID: ${feishuThreadId}`);
-      }
       if (!feishuThreadId) {
         log(
           `feishu[${account.accountId}]: no threadId found for root message ${ctx.rootId ?? "none"}, skipping thread history`,
@@ -1215,6 +1214,7 @@ export async function handleFeishuMessage(params: {
         threadContextBySessionKey.set(agentSessionKey, threadContext);
         return threadContext;
       }
+      log(`feishu[${account.accountId}]: resolved thread ID: ${feishuThreadId}`);
 
       try {
         const threadMessages = await listFeishuThreadMessages({

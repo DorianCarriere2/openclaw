@@ -11,6 +11,7 @@ import {
   loadSessionEntry,
   upsertSessionEntryCore,
 } from "./session-accessor.js";
+import { replaceTranscriptEvents } from "./session-accessor.sqlite-transcript-write.js";
 import type { SessionEntry } from "./types.js";
 
 it("retains only declared reply rows and their stored model parent at each snapshot", async () => {
@@ -49,6 +50,9 @@ it("retains only declared reply rows and their stored model parent at each snaps
       await upsertSessionEntryCore({ ...scope, sessionKey: key }, entry);
     }
 
+    await replaceTranscriptEvents({ ...scope, sessionId: current.sessionId }, [
+      { type: "session", version: 3, id: current.sessionId, timestamp: "2026-09-15T00:00:00.000Z" },
+    ]);
     const persistedCurrent = loadSessionEntry(scope)!;
     const persistedUnrelated = loadSessionEntry({ ...scope, sessionKey: unrelatedKey });
     const initialSql = observeHostDataSql();
@@ -60,6 +64,9 @@ it("retains only declared reply rows and their stored model parent at each snaps
     }
     expect(initialSql.queries, "initial reply snapshot caller-thread SQL").toEqual([]);
     expect(snapshot.currentEntry).toEqual(persistedCurrent);
+    expect(snapshot.lifecycleTimestamps.sessionStartedAt).toBe(
+      Date.parse("2026-09-15T00:00:00.000Z"),
+    );
     expect(snapshot.readEntry(storedParentKey)?.sessionId).toBe("stored-parent");
     expect(snapshot.readEntry(unrelatedKey)).toBeUndefined();
     expect(snapshot.readEntry("agent:main:missing")).toBeUndefined();

@@ -94,7 +94,6 @@ function createFeishuBotRuntime(overrides: DeepPartial<PluginRuntime> = {}): Plu
         resolveAgentRoute: mockResolveAgentRoute,
       },
       session: {
-        readSessionUpdatedAt: mockReadSessionUpdatedAt,
         resolveStorePath: mockResolveStorePath,
         recordInboundSession: vi.fn(async () => undefined),
       },
@@ -296,18 +295,20 @@ vi.mock("openclaw/plugin-sdk/channel-inbound", async () => {
   };
 });
 
-vi.mock("openclaw/plugin-sdk/reply-runtime", async () => {
-  const actual = await vi.importActual<typeof import("openclaw/plugin-sdk/reply-runtime")>(
-    "openclaw/plugin-sdk/reply-runtime",
-  );
-  return { ...actual, dispatchInboundMessage: mockDispatchInboundMessage };
-});
+vi.mock("openclaw/plugin-sdk/reply-runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("openclaw/plugin-sdk/reply-runtime")>()),
+  dispatchInboundMessage: mockDispatchInboundMessage,
+}));
 
 vi.mock("openclaw/plugin-sdk/session-store-runtime", async () => {
   const actual = await vi.importActual<typeof import("openclaw/plugin-sdk/session-store-runtime")>(
     "openclaw/plugin-sdk/session-store-runtime",
   );
-  return { ...actual, resolveStorePath: mockResolveStorePath };
+  return {
+    ...actual,
+    readSessionUpdatedAtAsync: async (params?: unknown) => mockReadSessionUpdatedAt(params),
+    resolveStorePath: mockResolveStorePath,
+  };
 });
 
 vi.mock("./reply-dispatcher.js", () => ({
@@ -736,8 +737,6 @@ describe("handleFeishuMessage command authorization", () => {
   });
 
   it("routes /compact through the standard reply dispatch path (#90185)", async () => {
-    mockShouldComputeCommandAuthorized.mockReturnValue(true);
-
     const cfg = createFeishuTestConfig({ dmPolicy: "open" });
 
     await dispatchMessage({

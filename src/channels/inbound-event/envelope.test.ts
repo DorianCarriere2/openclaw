@@ -25,6 +25,10 @@ vi.mock("../../config/sessions/paths.js", () => ({
   resolveSessionStorePathCore: resolveStorePath,
 }));
 vi.mock("../../config/sessions/session-accessor.js", () => ({ readSessionUpdatedAtCore }));
+vi.mock("../../config/sessions/session-entry-read-runtime.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../config/sessions/session-entry-read-runtime.js")>()),
+  readSessionEntryReadOnlyInWorker: vi.fn(),
+}));
 vi.mock("../../routing/resolve-route.js", () => ({ resolveAgentRoute }));
 
 const cfg = {

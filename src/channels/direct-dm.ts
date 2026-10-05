@@ -8,7 +8,7 @@ import {
 import type { PluginRuntime } from "../plugins/runtime/types.js";
 import { buildChannelInboundEventContext } from "./inbound-event/context.js";
 import {
-  resolveChannelInboundRouteEnvelope,
+  prepareChannelInboundRouteEnvelope,
   resolveInboundRouteEnvelopeBuilderWithRuntime,
 } from "./inbound-event/envelope.js";
 import type {
@@ -128,7 +128,7 @@ export async function dispatchInboundDirectDm(params: DispatchInboundDirectDmPar
   route: DirectDmRoute;
   ctxPayload: FinalizedMsgContext;
 }> {
-  const { route, buildEnvelope } = resolveChannelInboundRouteEnvelope({
+  const { route, buildEnvelope } = await prepareChannelInboundRouteEnvelope({
     cfg: params.cfg,
     channel: params.channel,
     accountId: params.accountId,

@@ -219,7 +219,7 @@ vi.mock("openclaw/plugin-sdk/session-store-runtime", async () => {
     ...actual,
     resolveStorePath: vi.fn(() => signalToolResultSessionStore.path),
     updateLastRoute: (...args: unknown[]) => updateLastRouteMock(...args),
-    readSessionUpdatedAt: vi.fn(() => undefined),
+    readSessionUpdatedAtAsync: vi.fn(async () => undefined),
     recordSessionMetaFromInbound: vi.fn().mockResolvedValue(undefined),
   };
 });

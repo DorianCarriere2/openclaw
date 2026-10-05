@@ -2,7 +2,7 @@ import { resolveAgentConfig } from "openclaw/plugin-sdk/agent-scope-runtime";
 import {
   formatInboundMediaUnavailableText,
   recordChannelBotPairLoopAndCheckSuppression,
-  resolveChannelInboundRouteEnvelope,
+  prepareChannelInboundRouteEnvelope,
   toInboundMediaFactsWithMetadata,
   type ChannelInboundMediaInput,
 } from "openclaw/plugin-sdk/channel-inbound";
@@ -119,7 +119,7 @@ async function processGoogleChatEvent(
     return;
   }
 
-  const { route, buildEnvelope } = resolveChannelInboundRouteEnvelope({
+  const { route, buildEnvelope } = await prepareChannelInboundRouteEnvelope({
     cfg: config,
     channel: "googlechat",
     accountId: account.accountId,

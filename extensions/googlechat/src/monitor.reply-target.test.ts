@@ -22,12 +22,12 @@ const routingMocks = vi.hoisted(() => ({
 }));
 
 const inboundMocks = vi.hoisted(() => ({
-  resolveChannelInboundRouteEnvelope: vi.fn(),
+  prepareChannelInboundRouteEnvelope: vi.fn(),
 }));
 
 vi.mock("openclaw/plugin-sdk/channel-inbound", async (importOriginal) => ({
   ...(await importOriginal<typeof import("openclaw/plugin-sdk/channel-inbound")>()),
-  resolveChannelInboundRouteEnvelope: inboundMocks.resolveChannelInboundRouteEnvelope,
+  prepareChannelInboundRouteEnvelope: inboundMocks.prepareChannelInboundRouteEnvelope,
 }));
 
 vi.mock("./api.js", () => ({
@@ -70,7 +70,7 @@ beforeEach(() => {
     groupBotLoopProtection: undefined,
     groupSystemPrompt: undefined,
   });
-  inboundMocks.resolveChannelInboundRouteEnvelope.mockReset().mockReturnValue({
+  inboundMocks.prepareChannelInboundRouteEnvelope.mockReset().mockReturnValue({
     route: {
       agentId: "agent-1",
       accountId: "work",

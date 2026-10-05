@@ -16,7 +16,7 @@ import {
 } from "../../state/openclaw-agent-db-schema-helpers.js";
 import {
   runOpenClawAgentWriteTransaction,
-  withOpenClawAgentDatabaseAsync,
+  withOpenClawAgentDatabaseRuntime,
   type OpenClawAgentDatabase,
 } from "../../state/openclaw-agent-db.js";
 import { runOpenClawAgentWriteAdmission } from "../../state/openclaw-agent-write-admission.js";
@@ -441,7 +441,7 @@ export async function runAuthProfileWriteTransactionAsync<T>(
   return runOpenClawAgentWriteAdmission(
     databaseTarget,
     () =>
-      withOpenClawAgentDatabaseAsync(
+      withOpenClawAgentDatabaseRuntime(
         databaseTarget,
         // The async owner retains the cached handle through this synchronous transaction.
         () => runPreparedAuthProfileWriteTransaction(prepared, operation),

@@ -6,7 +6,7 @@ const {
   authenticateMock,
   buildChannelInboundEnvelopeMock,
   builtInboundContextPayload,
-  createChannelInboundEnvelopeBuilderMock,
+  prepareChannelInboundEnvelopeBuilderMock,
   formatInboundMediaUnavailableTextMock,
   sleepWithAbortMock,
   saveRemoteMediaMock,
@@ -19,7 +19,7 @@ const {
   authenticateMock: vi.fn(),
   buildChannelInboundEnvelopeMock: vi.fn(),
   builtInboundContextPayload: { kind: "tlon-inbound-context" },
-  createChannelInboundEnvelopeBuilderMock: vi.fn(),
+  prepareChannelInboundEnvelopeBuilderMock: vi.fn(),
   formatInboundMediaUnavailableTextMock: vi.fn(),
   sleepWithAbortMock: vi.fn(),
   saveRemoteMediaMock: vi.fn(),
@@ -75,7 +75,7 @@ vi.mock("openclaw/plugin-sdk/agent-runtime", () => ({
 
 vi.mock("openclaw/plugin-sdk/channel-inbound", async (importOriginal) => ({
   ...(await importOriginal<typeof import("openclaw/plugin-sdk/channel-inbound")>()),
-  createChannelInboundEnvelopeBuilder: createChannelInboundEnvelopeBuilderMock,
+  prepareChannelInboundEnvelopeBuilder: prepareChannelInboundEnvelopeBuilderMock,
   formatInboundMediaUnavailableText: formatInboundMediaUnavailableTextMock,
 }));
 
@@ -167,7 +167,7 @@ export function useTlonMonitorFixture() {
     inboundRuntimeMock.resolveStable
       .mockReset()
       .mockImplementation((params) => ingress.resolveStable(params));
-    createChannelInboundEnvelopeBuilderMock.mockReturnValue(buildChannelInboundEnvelopeMock);
+    prepareChannelInboundEnvelopeBuilderMock.mockResolvedValue(buildChannelInboundEnvelopeMock);
     buildChannelInboundEnvelopeMock.mockReturnValue("tlon-envelope");
     formatInboundMediaUnavailableTextMock.mockReturnValue("formatted-inbound-body");
     inboundRuntimeMock.buildContext.mockReset().mockReturnValue(builtInboundContextPayload);

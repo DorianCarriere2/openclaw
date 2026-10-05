@@ -2,7 +2,7 @@ import { normalizeURL } from "nostr-tools/utils";
 import {
   buildChannelInboundEventContext,
   logInboundDrop,
-  resolveChannelInboundRouteEnvelope,
+  prepareChannelInboundRouteEnvelope,
 } from "openclaw/plugin-sdk/channel-inbound";
 import { resolveBotThreadMentionPolicy } from "openclaw/plugin-sdk/channel-mention-gating";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
@@ -37,7 +37,7 @@ export async function handleBuzzInbound(params: {
   const channelId = parseBuzzTarget(message.channelId);
   const target = buildBuzzTarget(channelId);
   const textForAgent = formatBuzzMessageForAgent(message);
-  const { route, buildEnvelope } = resolveChannelInboundRouteEnvelope({
+  const { route, buildEnvelope } = await prepareChannelInboundRouteEnvelope({
     cfg,
     channel: "buzz",
     accountId: account.accountId,

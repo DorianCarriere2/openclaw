@@ -20,6 +20,7 @@ import {
   readTranscriptStatsSync as readAccessorTranscriptStatsSync,
   updateSessionEntry,
 } from "../config/sessions/session-accessor.js";
+import { readSessionEntryReadOnlyInWorker } from "../config/sessions/session-entry-read-runtime.js";
 import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
 import { normalizeResolvedMaintenanceConfigInput } from "../config/sessions/store-maintenance.js";
 import type { ResolvedSessionMaintenanceConfigInput } from "../config/sessions/store-maintenance.js";
@@ -254,6 +255,17 @@ export async function patchSessionEntry(
 /** Reads the last activity timestamp for one session entry. */
 export function readSessionUpdatedAt(params: SessionStoreReadParams): number | undefined {
   return readAccessorSessionUpdatedAt(toSessionAccessScope(params));
+}
+
+/** Prepare the last activity timestamp through the session database reader. */
+export async function readSessionUpdatedAtAsync(
+  params: SessionStoreReadParams,
+): Promise<number | undefined> {
+  const entry = await readSessionEntryReadOnlyInWorker({
+    ...toSessionAccessScope(params),
+    snapshotFields: [],
+  });
+  return entry?.updatedAt;
 }
 
 export { resolveAmbientTranscriptWatermarkKey, updateAmbientTranscriptWatermark };

@@ -10,7 +10,7 @@ import {
 import { resolveStateDir } from "../config/state-dir.js";
 import {
   runOpenClawAgentWriteTransaction,
-  withOpenClawAgentDatabaseAsync,
+  withOpenClawAgentDatabaseRuntime,
 } from "../state/openclaw-agent-db.js";
 import {
   isIncognitoOpenClawAgentSqlitePath,
@@ -195,7 +195,7 @@ async function runHeartbeatOutcomeOperation(
     return await runOpenClawAgentWriteAdmission(
       options,
       () =>
-        withOpenClawAgentDatabaseAsync(
+        withOpenClawAgentDatabaseRuntime(
           options,
           async ({ db }) => {
             assertQueuedCurrent();

@@ -1,6 +1,6 @@
 import {
   logInboundDrop,
-  resolveChannelInboundRouteEnvelope,
+  prepareChannelInboundRouteEnvelope,
 } from "openclaw/plugin-sdk/channel-inbound";
 import { channelIngressRoutes } from "openclaw/plugin-sdk/channel-ingress-runtime";
 import {
@@ -219,7 +219,7 @@ export async function handleIrcInbound(params: {
       ? message.target
       : `#${message.target}`;
   const peerId = message.isGroup ? channelTarget : message.senderNick;
-  const { route, buildEnvelope } = resolveChannelInboundRouteEnvelope({
+  const { route, buildEnvelope } = await prepareChannelInboundRouteEnvelope({
     cfg: config,
     channel: CHANNEL_ID,
     accountId: account.accountId,

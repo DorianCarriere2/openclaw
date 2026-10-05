@@ -28,7 +28,7 @@ import { withOpenClawAgentDatabaseReadOnly } from "../state/openclaw-agent-db-re
 import {
   getOpenClawAgentDatabaseIfOpen,
   resolveOpenClawAgentSqlitePath,
-  withOpenClawAgentDatabaseAsync,
+  withOpenClawAgentDatabaseRuntime,
   runOpenClawAgentWriteTransaction,
   type OpenClawAgentDatabase,
 } from "../state/openclaw-agent-db.js";
@@ -238,17 +238,15 @@ export class SqliteBoardStore implements BoardStore {
         return execute(writeAuthority);
       });
     }
-    const assertOpenCurrent = () => {
-      assertCurrent();
-      this.requireExistingSession({ ...resolved, path: databaseOptions.path }, env);
-    };
-    assertOpenCurrent();
+    assertCurrent();
+    this.requireExistingSession({ ...resolved, path: databaseOptions.path }, env);
     return runOpenClawAgentWriteAdmission(
       databaseOptions,
       () =>
-        withOpenClawAgentDatabaseAsync(
+        withOpenClawAgentDatabaseRuntime(
           databaseOptions,
           async (database) => {
+            this.requireExistingSession({ ...resolved, path: databaseOptions.path }, env);
             if (prepare) {
               await prepare();
             }
@@ -330,7 +328,7 @@ export class SqliteBoardStore implements BoardStore {
             }
             return outcome.value;
           },
-          assertOpenCurrent,
+          assertCurrent,
         ),
       true,
     );

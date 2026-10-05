@@ -1,7 +1,7 @@
 import { createAsyncLock } from "openclaw/plugin-sdk/async-lock-runtime";
 import {
   buildChannelInboundEventContext,
-  createChannelInboundEnvelopeBuilder,
+  prepareChannelInboundEnvelopeBuilder,
   formatInboundMediaUnavailableText,
   resolveChannelInboundRouteEnvelope,
   toInboundMediaFactsWithMetadata,
@@ -337,7 +337,7 @@ export async function handleQaInbound(params: {
     threadId: inbound.threadId,
     parentSessionKey: isGroup ? route.sessionKey : undefined,
   });
-  const buildEnvelope = createChannelInboundEnvelopeBuilder({
+  const buildEnvelope = await prepareChannelInboundEnvelopeBuilder({
     cfg: params.config,
     route: { agentId: route.agentId, sessionKey: threadKeys.sessionKey },
   });

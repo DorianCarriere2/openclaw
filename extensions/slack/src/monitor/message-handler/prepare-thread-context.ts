@@ -8,7 +8,7 @@ import {
   shouldIncludeSupplementalContext,
 } from "openclaw/plugin-sdk/security-runtime";
 import {
-  readSessionUpdatedAt,
+  readSessionUpdatedAtAsync,
   resolveChannelResetConfig,
 } from "openclaw/plugin-sdk/session-store-runtime";
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
@@ -155,7 +155,7 @@ export async function resolveSlackThreadContextData(params: {
       : undefined;
   const threadSessionPreviousTimestamp =
     params.isThreadReply && params.threadTs && !threadSessionFreshness
-      ? readSessionUpdatedAt({
+      ? await readSessionUpdatedAtAsync({
           storePath: params.storePath,
           sessionKey: params.sessionKey,
         })

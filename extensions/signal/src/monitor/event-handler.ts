@@ -61,7 +61,10 @@ import { resolveAgentRoute, resolveInboundLastRouteSessionKey } from "openclaw/p
 import { createRuntimeConfigReader } from "openclaw/plugin-sdk/runtime-config-snapshot";
 import { danger, logVerbose, shouldLogVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { resolvePinnedMainDmOwnerFromAllowlist } from "openclaw/plugin-sdk/security-runtime";
-import { readSessionUpdatedAt, resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
+import {
+  readSessionUpdatedAtAsync,
+  resolveStorePath,
+} from "openclaw/plugin-sdk/session-store-runtime";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { enqueueSystemEvent } from "openclaw/plugin-sdk/system-event-runtime";
 import { normalizeE164, truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
@@ -126,13 +129,10 @@ function isSignalReplySessionInitConflictError(error: unknown): boolean {
   );
 }
 
-function resolveSignalInboundRoute(params: {
-  cfg: SignalEventHandlerDeps["cfg"];
-  accountId: SignalEventHandlerDeps["accountId"];
-  isGroup: boolean;
-  groupId?: string;
-  senderPeerId: string;
-}) {
+function resolveSignalInboundRoute(
+  params: Pick<SignalEventHandlerDeps, "cfg" | "accountId"> &
+    Pick<SignalInboundEntry, "isGroup" | "groupId" | "senderPeerId">,
+) {
   return resolveAgentRoute({
     cfg: params.cfg,
     channel: "signal",
@@ -188,7 +188,7 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
       agentId: route.agentId,
     });
     const envelopeOptions = resolveEnvelopeFormatOptions(cfg);
-    const previousTimestamp = readSessionUpdatedAt({
+    const previousTimestamp = await readSessionUpdatedAtAsync({
       storePath,
       sessionKey: route.sessionKey,
     });

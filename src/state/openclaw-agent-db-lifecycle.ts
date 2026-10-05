@@ -101,6 +101,7 @@ export type PendingAgentDatabaseOpen = {
   operations: number;
   releaseBorrow?: () => void;
   validation?: OpenClawAgentDatabaseValidation;
+  workerPrepared?: boolean;
 };
 type RetainedAgentDatabaseClose = { agentId: string; path: string; close: () => void };
 const cache = resolveGlobalSingleton<AgentDatabaseLifecycle>(
@@ -418,6 +419,22 @@ export function closeCachedOpenClawAgentDatabase(
   releaseAgentCreationClaimHandle(database);
   cache.idleTimers.get(database.db)?.[Symbol.dispose]();
   cache.idleTimers.delete(database.db);
+}
+
+/** A lifecycle scope closes its exact connection and retains its borrow until disposal succeeds. */
+export function createAgentDatabaseScopeOwnedClose(
+  database: OpenClawAgentDatabase,
+  owner: string,
+): () => Promise<void> {
+  const release = retainAgentDatabase(database.db);
+  return async () => {
+    if (cache.databases.get(database.path) === database) {
+      await closeOpenClawAgentDatabaseByPathAsync(database.path, database.agentId);
+    } else if (database.db.isOpen) {
+      throw new Error(`${owner} lost its database close owner.`);
+    }
+    release();
+  };
 }
 
 /** Close one cached agent database identified by its exact resolved pathname. */

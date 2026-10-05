@@ -525,13 +525,14 @@ export type SessionAbortTargetResult = SessionAbortTargetIdentity & {
 
 export type ReplySessionInitializationSnapshot = {
   currentEntry?: SessionEntry;
+  lifecycleTimestamps: import("./lifecycle.types.js").SessionLifecycleTimestamps;
   readEntry: (sessionKey: string) => SessionEntry | undefined;
   revision: string;
 };
 
 export type ReplySessionInitializationCommitContext = Omit<
   ReplySessionInitializationSnapshot,
-  "revision"
+  "revision" | "lifecycleTimestamps"
 > & {
   sessionEntry: SessionEntry;
 };

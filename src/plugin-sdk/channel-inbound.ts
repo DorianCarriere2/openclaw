@@ -118,7 +118,10 @@ export {
 } from "../channels/location.js";
 export type { LogFn } from "../channels/logging.js";
 export { logInboundDrop } from "../channels/logging.js";
-export { resolveInboundSessionEnvelopeContext } from "../channels/session-envelope.js";
+export {
+  prepareInboundSessionEnvelopeContext,
+  resolveInboundSessionEnvelopeContext,
+} from "../channels/session-envelope.js";
 export {
   classifyChannelInboundEvent,
   resolveUnmentionedGroupInboundPolicy,
@@ -126,6 +129,8 @@ export {
 export type { ClassifyChannelInboundEventParams } from "../channels/inbound-event/classification.js";
 export {
   createChannelInboundEnvelopeBuilder,
+  prepareChannelInboundEnvelopeBuilder,
+  prepareChannelInboundRouteEnvelope,
   resolveChannelInboundRouteEnvelope,
   type ChannelInboundEnvelopeInput,
 } from "../channels/inbound-event/envelope.js";

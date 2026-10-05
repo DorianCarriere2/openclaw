@@ -23,6 +23,10 @@ vi.mock("../config/sessions/session-accessor.js", () => ({
   readSessionUpdatedAtCore,
   resolveSessionTranscriptRuntimeTarget,
 }));
+vi.mock("../config/sessions/session-entry-read-runtime.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../config/sessions/session-entry-read-runtime.js")>()),
+  readSessionEntryReadOnlyInWorker: vi.fn(async () => undefined),
+}));
 vi.mock("./turn/lifecycle.js", () => ({ dispatchRoutedChannelTurn }));
 
 const cfg = {} as OpenClawConfig;

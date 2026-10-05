@@ -48,9 +48,12 @@ import {
   listOpenIncognitoAgentDatabases,
   openOpenClawAgentDatabase,
   resolveIncognitoOpenClawAgentSqlitePath,
+  resolveOpenClawAgentSqlitePath,
+  withOpenClawAgentDatabaseRuntime,
 } from "../state/openclaw-agent-db.js";
 import type { IncognitoAgentDatabaseExecution } from "../state/openclaw-agent-execution-incognito.js";
 import { captureOpenClawAgentDatabaseExecution } from "../state/openclaw-agent-execution.js";
+import { runOpenClawAgentWorkerWrite } from "../state/openclaw-agent-write-admission.js";
 import { readOpenClawAgentIntegrityVerification } from "../state/openclaw-quarantine-store.js";
 import { withExistingOpenClawStateDatabaseReadOnly } from "../state/openclaw-state-db-readonly.js";
 import {
@@ -271,6 +274,9 @@ it("joins scheduled plugin work before closing stores while retaining a deleted 
   const releaseRootWork = createDeferredCore();
   let closing: Promise<void> | undefined;
   let heldWriter: ReturnType<typeof patchSessionEntryCore> | undefined;
+  let heldColdWriter: Promise<void> | undefined;
+  let acceptedColdAdmission: Promise<void> | undefined;
+  let coldDatabase: ReturnType<typeof openOpenClawAgentDatabase> | undefined;
   let acceptedFinal: ReturnType<typeof settlePendingFinalDelivery> | undefined;
   let acceptedLifecycle: ReturnType<typeof applySessionEntryLifecycleMutation> | undefined;
   let acceptedTerminal: Promise<void> | undefined;
@@ -312,6 +318,10 @@ it("joins scheduled plugin work before closing stores while retaining a deleted 
     );
     const activeStore = path.join(fixture.state.sessionsDir("main"), "sessions.json");
     const retainedStore = path.join(fixture.state.sessionsDir("retired"), "sessions.json");
+    const coldOptions = { agentId: "cold-close", env: fixture.state.env };
+    const coldStore = path.join(fixture.state.sessionsDir(coldOptions.agentId), "sessions.json");
+    const coldPath = resolveOpenClawAgentSqlitePath(coldOptions);
+    const coldSessionKey = "agent:cold-close:main";
     for (const [agentId, storePath] of [
       ["main", activeStore],
       ["retired", retainedStore],
@@ -403,6 +413,12 @@ it("joins scheduled plugin work before closing stores while retaining a deleted 
       { skipMaintenance: true, workerGuard: {} },
     );
     await withinTest(writerEntered.promise, signal);
+    const coldWriterEntered = createDeferredCore();
+    heldColdWriter = runOpenClawAgentWorkerWrite(coldOptions, async () => {
+      coldWriterEntered.resolve();
+      await releaseRootWork.promise;
+    });
+    await withinTest(coldWriterEntered.promise, signal);
     const stopService = vi.fn(() => stopEntered.resolve());
     const services = createEmptyPluginRegistry();
     services.services.push({
@@ -437,6 +453,13 @@ it("joins scheduled plugin work before closing stores while retaining a deleted 
       id: "kernel-held-work",
       delayMs: 0,
       async run() {
+        acceptedColdAdmission = withOpenClawAgentDatabaseRuntime(coldOptions, async (database) => {
+          coldDatabase = database;
+          await replaceSessionEntry(
+            { agentId: coldOptions.agentId, storePath: coldStore, sessionKey: coldSessionKey },
+            { sessionId: "cold-close-session", updatedAt: 1, label: "accepted before close" },
+          );
+        });
         acceptedFinal = settlePendingFinalDelivery(
           {
             kind: "pending-final",
@@ -470,7 +493,12 @@ it("joins scheduled plugin work before closing stores while retaining a deleted 
           event: terminalEvent,
         });
         rootWorkEntered.resolve();
-        await Promise.all([acceptedFinal, acceptedLifecycle, acceptedTerminal]);
+        await Promise.all([
+          acceptedColdAdmission,
+          acceptedFinal,
+          acceptedLifecycle,
+          acceptedTerminal,
+        ]);
       },
     });
     await vi.advanceTimersByTimeAsync(0);
@@ -505,8 +533,11 @@ it("joins scheduled plugin work before closing stores while retaining a deleted 
     expect(disposed).toBe(false);
     expect(shared.isOpen).toBe(true);
     expect(agent.isOpen).toBe(true);
+    expect(coldDatabase).toBeUndefined();
+    await expect(fs.stat(coldPath)).rejects.toMatchObject({ code: "ENOENT" });
     releaseRootWork.resolve();
-    await heldWriter;
+    await Promise.all([heldWriter, heldColdWriter]);
+    await expect(acceptedColdAdmission).resolves.toBeUndefined();
     await expect(acceptedFinal).resolves.toEqual({ state: "delivered" });
     await expect(acceptedLifecycle).resolves.toMatchObject({ removedEntries: 0 });
     await expect(acceptedTerminal).resolves.toBeUndefined();
@@ -515,6 +546,14 @@ it("joins scheduled plugin work before closing stores while retaining a deleted 
     expect(disposed).toBe(true);
     expect(shared.isOpen).toBe(false);
     expect(agent.isOpen).toBe(false);
+    expect(coldDatabase?.db.isOpen).toBe(false);
+    expect(
+      loadSessionEntry({
+        agentId: coldOptions.agentId,
+        storePath: coldStore,
+        sessionKey: coldSessionKey,
+      }),
+    ).toMatchObject({ sessionId: "cold-close-session", label: "accepted before close" });
     expect(
       loadSessionEntry({ agentId: "main", storePath: activeStore, sessionKey: terminalKey }),
     ).toMatchObject({ status: "done", startedAt: 1_000, endedAt: 2_000 });
@@ -546,6 +585,8 @@ it("joins scheduled plugin work before closing stores while retaining a deleted 
     releaseRootWork.resolve();
     await Promise.allSettled([
       heldWriter,
+      heldColdWriter,
+      acceptedColdAdmission,
       acceptedFinal,
       acceptedLifecycle,
       acceptedTerminal,
