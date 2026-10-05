@@ -350,7 +350,7 @@ const bootstrapSizeCheck: CoreHealthCheck = {
     );
     // bootstrapMaxChars cannot raise USER.md's ceiling, so per-file tuning advice is a
     // dead end: name the cap, compaction, and the dedicated opt-in, matching the Doctor note.
-    const isUserCap = (file: { name: string; effectiveFileLimit: number }) =>
+    const isUserCap = (file: { name: string; effectiveFileLimit: number; personalUser?: true }) =>
       isUserCapFile(file, userBootstrapMaxChars);
     const userCapHint = `Reduce the file size; USER.md has a ${userBootstrapMaxChars.toLocaleString("en-US")}-character bootstrap cap that \`bootstrapMaxChars\` cannot raise. To opt in to a larger shared USER.md, set \`agents.entries.*.userBootstrapMaxChars\` for this agent, or \`agents.defaults.userBootstrapMaxChars\` as fallback.`;
     const findings: HealthFinding[] = [];

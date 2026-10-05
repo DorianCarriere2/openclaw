@@ -111,7 +111,7 @@ export async function noteBootstrapFileSize(cfg: OpenClawConfig) {
     );
 
     // Report USER.md's own ceiling separately from bootstrapMaxChars, which cannot raise it.
-    const isUserCap = (file: { name: string; effectiveFileLimit: number }) =>
+    const isUserCap = (file: { name: string; effectiveFileLimit: number; personalUser?: true }) =>
       isUserCapFile(file, userBootstrapMaxChars);
     const userCapApplied = analysis.truncatedFiles.some(
       (file) => isUserCap(file) && file.causes.includes("per-file-limit"),

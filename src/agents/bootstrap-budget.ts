@@ -41,12 +41,15 @@ function normalizePositiveLimit(value: number): number {
 }
 
 function effectiveBootstrapFileLimit(
-  name: string,
+  file: { name: string; personalUser?: true },
   bootstrapMaxChars: number,
   userBootstrapMaxChars: number,
 ): number {
-  return name.toLowerCase() === "user.md"
-    ? Math.min(bootstrapMaxChars, userBootstrapMaxChars)
+  return file.name.toLowerCase() === "user.md"
+    ? Math.min(
+        bootstrapMaxChars,
+        file.personalUser ? USER_BOOTSTRAP_MAX_CHARS : userBootstrapMaxChars,
+      )
     : bootstrapMaxChars;
 }
 
@@ -57,10 +60,11 @@ function effectiveBootstrapFileLimit(
  * USER.md ceiling exactly when that ceiling (not bootstrapMaxChars) binds.
  */
 export function isUserCapFile(
-  file: { name: string; effectiveFileLimit: number },
+  file: { name: string; effectiveFileLimit: number; personalUser?: true },
   userBootstrapMaxChars: number,
 ): boolean {
-  return file.name.toLowerCase() === "user.md" && file.effectiveFileLimit === userBootstrapMaxChars;
+  const ceiling = file.personalUser ? USER_BOOTSTRAP_MAX_CHARS : userBootstrapMaxChars;
+  return file.name.toLowerCase() === "user.md" && file.effectiveFileLimit === ceiling;
 }
 
 /** Restores prompt-warning dedupe state from a previous bootstrap report. */
@@ -120,6 +124,7 @@ export function buildBootstrapInjectionStats(params: {
       rawChars,
       injectedChars,
       truncated,
+      ...(file.personalUser ? { personalUser: true as const } : {}),
     };
   });
 }
@@ -150,7 +155,7 @@ export function analyzeBootstrapBudget(params: {
   let remainingTotalChars = bootstrapTotalMaxChars;
   const files = params.files.map((file) => {
     const effectiveFileLimit = effectiveBootstrapFileLimit(
-      file.name,
+      file,
       bootstrapMaxChars,
       userBootstrapMaxChars,
     );
