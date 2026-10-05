@@ -50,15 +50,16 @@ export function resolveExecApprovalsFromFileInternal(params: {
       defaultValue !== undefined
         ? { value: defaultValue, source: `defaults.${field}` }
         : { value: resolvedDefaults[field], source: null };
-    if (rawAgent[field] != null) {
-      const value = agent[field];
-      return value !== undefined ? { value, source: `agents.${agentKey}.${field}` } : fallbackField;
-    }
-    if (rawWildcard[field] != null) {
-      const value = wildcard[field];
-      return value !== undefined ? { value, source: `agents.*.${field}` } : fallbackField;
-    }
-    return fallbackField;
+    const agentOverrides = rawAgent[field] != null;
+    const policy: ExecApprovalsDefaults | undefined = agentOverrides
+      ? agent
+      : rawWildcard[field] != null
+        ? wildcard
+        : undefined;
+    const value = policy?.[field];
+    return value !== undefined
+      ? { value, source: `agents.${agentOverrides ? agentKey : "*"}.${field}` }
+      : fallbackField;
   };
   const resolvedAgentSecurity = resolveField("security");
   const resolvedAgentAsk = resolveField("ask");

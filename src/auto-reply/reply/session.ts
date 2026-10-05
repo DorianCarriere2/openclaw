@@ -678,14 +678,14 @@ async function initSessionStateAttemptLocked(
     : undefined;
   const terminalMainTranscriptNewerThanRegistry =
     !isSystemEvent &&
-    (await hasTerminalMainSessionTranscriptNewerThanRegistrySync({
+    hasTerminalMainSessionTranscriptNewerThanRegistrySync({
       entry,
       sessionScope,
       sessionKey,
       agentId,
       mainKey,
       storePath,
-    }));
+    });
   const recoverTerminalVisibleEntry =
     canReuseExistingEntry &&
     !isSystemEvent &&

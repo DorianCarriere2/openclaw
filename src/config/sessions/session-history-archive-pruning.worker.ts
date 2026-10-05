@@ -52,7 +52,7 @@ export function readSessionArchivePruningInDatabase(
       .orderBy("generation", "asc")
       .limit(limit),
   ).rows;
-  return rows.map((row) => ({ ...row }));
+  return rows.map((row) => Object.assign({}, row));
 }
 
 export function readSessionArchivePruningInWorker(
