@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { MessageChannel } from "node:worker_threads";
 import { requestSqliteWorkerOperationAdmission } from "../../infra/sqlite-worker-operation-admission.js";
 import { readConfigMachineState } from "../../state/config-machine-state.js";
 import {
@@ -13,6 +14,11 @@ import {
 import type { WorkerOperationHandlers } from "../../state/worker-operation-registry.js";
 import { readAuthProfileRows, SHARED_AUTH_STORE_STATE_KEY } from "./sqlite-json.js";
 import { isMissingDatabasePath } from "./sqlite-read-pool.js";
+import {
+  updateAuthProfileStoreInDatabase,
+  type AuthStoreUpdateInput,
+} from "./store-update-kernel.js";
+import { sendAuthProfileUpdateValue } from "./store-update-transfer.js";
 import type { AuthProfileUsageInput, AuthProfileUsageResult } from "./store.worker-contract.js";
 import type { AuthProfileRowRead } from "./types.js";
 import { recordAuthProfileUsageInDatabase } from "./usage-kernel.js";
@@ -24,6 +30,16 @@ import { reduceAuthProfileFailure } from "./usage-reduction.js";
 import { resetAuthProfileFailureState } from "./usage-state.js";
 
 export const authProfileOperations = {
+  "authProfiles.update": (input: AuthStoreUpdateInput, { stateOptions }) =>
+    runOpenClawStateWriteTransaction(
+      ({ db }) => {
+        const receipt = updateAuthProfileStoreInDatabase(db, "shared-state", input);
+        requestSqliteWorkerOperationAdmission({ stage: "commit", facts: undefined });
+        return receipt;
+      },
+      stateOptions(),
+      { operationLabel: "auth-profiles.update" },
+    ),
   "authProfiles.usage": (input: AuthProfileUsageInput, { stateOptions }): AuthProfileUsageResult =>
     runOpenClawStateWriteTransaction(
       ({ db, path }) => {
@@ -92,7 +108,18 @@ export const authProfileOperations = {
             };
       }
     };
-    return input.artifactPreserving ? withArtifactPreservingStateReads(read) : read();
+    const rows = input.artifactPreserving ? withArtifactPreservingStateReads(read) : read();
+    const { port1, port2 } = new MessageChannel();
+    try {
+      sendAuthProfileUpdateValue(port1, rows);
+      requestSqliteWorkerOperationAdmission(
+        { stage: "prepare", facts: { kind: "auth-store-read", port: port2 } },
+        [port2],
+      );
+    } finally {
+      port1.close();
+      port2.close();
+    }
   },
   "authProfiles.sharedOwnership": (input: { artifactPreserving: boolean }, { stateOptions }) => {
     const read = () => readConfigMachineState(SHARED_AUTH_STORE_STATE_KEY, stateOptions());
