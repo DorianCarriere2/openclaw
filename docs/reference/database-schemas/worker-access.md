@@ -495,6 +495,30 @@ routes or T1 sites and changes no schema, retention, durability, session expiry,
 or update behavior. Compute, fork, and deferred projection composition remain
 separate prerequisites for atomic activation.
 
+### Incognito creation and shared binding (P7h, inactive)
+
+Creation, generic entry patches, SessionManager, and Codex history can consume
+one captured actor binding. The binding validates the physical namespace before
+yielding and never adopts a successor or selects native storage after revocation.
+Production acquisition still supplies no binding; the final atomic activation
+must install it together with the remaining domain and history adapters.
+
+Public creation prepares on the actor, then rechecks the authoritative entry and
+label inside its synchronous transaction. Transcript initialization and owner
+assignment commit together. Entry patches reuse the existing selection, CAS,
+predicate, and mutation kernels. Their native commit receipts carry the exact
+result and session facts; acknowledged publication installs those facts before
+callbacks and identity observers, within the original writer FIFO. Preparation
+and postcommit bookkeeping retain actor lifetime without holding the FIFO across
+another actor request. Accepted writes settle without the enclosing admission
+signal; new work respects that signal.
+
+Synchronous SessionManager persistence and Codex context access refuse a bound
+actor before native SQL, detached-view changes, or tool-result hooks. Detached
+getters and unbound durable SDK compatibility retain their existing behavior.
+This prerequisite keeps native routes, retires no T1 sites, and changes no
+schema, retention, durability, expiry, configuration, or update behavior.
+
 ### Existing worker flows
 
 Remote model catalog refreshes capture the shared store before downloading and

@@ -86,6 +86,8 @@ import { buildSessionCreationStamp } from "./session-entry-provenance.js";
 import type { CapturedSessionEntryReadSource } from "./session-entry-read-source.types.js";
 import { sessionEntrySnapshotColumns } from "./session-entry-snapshots.js";
 import { kickSessionHistoryDiskBudgetMaintenance } from "./session-history-eviction.js";
+import { captureIncognitoSessionBinding } from "./session-incognito-binding.js";
+import { patchIncognitoSessionEntry } from "./session-incognito-entry-patch.js";
 import { resolveSessionStorePathForScope } from "./session-store-path.js";
 import type { InternalSessionEntry as SessionEntry } from "./types.js";
 import { mergeSessionEntry, mergeSessionEntryPreserveActivity } from "./types.js";
@@ -363,7 +365,7 @@ export async function patchSessionEntryTarget(
     : resolveSqliteScope({
         agentId: scope.agentId,
         env: scope.env,
-        sessionKey: "",
+        sessionKey: scope.target.canonicalKey,
         storePath: scope.storePath,
       });
   return await patchSqliteSessionEntrySnapshot({
@@ -418,9 +420,28 @@ async function patchSqliteSessionEntrySnapshot(
   resolved.path = databasePath;
   databaseOptions.path = databasePath;
   const incognito = isIncognitoOpenClawAgentSqlitePath(databasePath, databaseOptions);
+  const incognitoBinding = captureIncognitoSessionBinding({
+    agentId: databaseOptions.agentId,
+    env: resolved.env,
+    sessionKey,
+    storePath: databasePath,
+  });
   const captured = params.capturedSource;
   const assertCapturedSource = (database?: OpenClawAgentDatabase) => {
     if (!captured) {
+      return;
+    }
+    if (incognitoBinding) {
+      const { actor } = incognitoBinding;
+      actor.assertCurrent();
+      if (
+        captured.agentId !== actor.agentId ||
+        captured.path !== actor.path ||
+        captured.databaseIdentity !== actor.identity.incarnation ||
+        captured.databaseBirthtime !== undefined
+      ) {
+        throw new Error("Captured session database changed before entry patch");
+      }
       return;
     }
     if (!database && typeof captured.databaseIdentity === "string") {
@@ -495,6 +516,22 @@ async function patchSqliteSessionEntrySnapshot(
       ? withOpenClawAgentDatabaseAsync(databaseOptions, operation, assertCurrent)
       : operation();
   };
+  if (incognitoBinding) {
+    const result = await patchIncognitoSessionEntry({
+      ...incognitoBinding,
+      sessionKey,
+      selection: params.selection,
+      assertCurrent() {
+        assertCurrent?.();
+        options.workerGuard?.assertCurrent?.();
+      },
+      assertCommitAllowed: options.assertCommitAllowed,
+      shouldCommit: options.shouldCommit,
+      prepare,
+      onCommitted: options.onCommitted,
+    });
+    return result.entry;
+  }
   let wrote = false;
   const useWorker =
     isMainThread &&

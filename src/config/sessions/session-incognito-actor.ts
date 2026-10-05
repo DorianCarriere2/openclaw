@@ -1,5 +1,4 @@
 import { isDeepStrictEqual } from "node:util";
-import { isPromiseLike } from "@openclaw/normalization-core/promise-like";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import {
   createSqliteWorkerOperationAdmission,
@@ -13,6 +12,12 @@ import type {
   AgentDatabaseIncognitoIdentity,
   AgentDatabaseIncognitoOperations,
 } from "../../state/openclaw-agent-execution-contract.js";
+import {
+  authorizeSessionFacts,
+  incognitoEntryPublication,
+  isIncognitoEntryValidationGrant,
+  type IncognitoEntryOperations,
+} from "./session-incognito-admission.js";
 import {
   isIncognitoComputeWrite,
   type IncognitoComputeTarget,
@@ -73,18 +78,6 @@ export type IncognitoSessionActor = {
   readonly sessions: ReturnType<ReturnType<typeof createIncognitoSessionFacts>["bind"]>;
   assertCurrent(): void;
 };
-
-function authorizeSessionFacts(
-  authority: IncognitoSessionAuthority,
-  stage: "transaction" | "commit",
-  facts: IncognitoSessionFacts,
-) {
-  const authorization: unknown = authority.authorize?.(stage, structuredClone(facts));
-  if (isPromiseLike(authorization)) {
-    void Promise.resolve(authorization).catch(() => undefined);
-    throw new Error("Incognito session grants must remain synchronous");
-  }
-}
 
 /** Actor-local projection owned by its lifetime, never a roster or full-entry cache. */
 export function createIncognitoSessionFacts(
@@ -189,6 +182,7 @@ export function createIncognitoSessionFacts(
         companion?: LifecycleSettlement,
         cleanup = false,
         publication?: {
+          factsKey?: "entry";
           authorize(stage: "transaction" | "commit", facts: unknown): void;
           decodeReceipt(facts: unknown): IncognitoSessionOperations[Key]["output"];
         },
@@ -252,13 +246,16 @@ export function createIncognitoSessionFacts(
                     if (!postimage || !isDeepStrictEqual(receipt, postimage)) {
                       unknownOutcome("Incognito commit receipt differs from its grant");
                     }
-                    try {
-                      if (outcome.ok && native.admission.settlement?.kind === "completed") {
-                        onCommitted?.(outcome.value);
+                    // Revocation cannot undo COMMIT. Publish while FIFO custody is still held.
+                    postimage.forEach(install);
+                    for (const key of targets) {
+                      pending.delete(key);
+                    }
+                    if (native.admission.settlement?.kind === "completed") {
+                      const committedValue = recovered ?? (outcome.ok ? outcome.value : undefined);
+                      if (committedValue) {
+                        onCommitted?.(committedValue);
                       }
-                    } finally {
-                      // Revocation cannot undo COMMIT. Publish while FIFO custody is still held.
-                      postimage.forEach(install);
                     }
                   } else if (changing && (commitGranted || outcome.ok)) {
                     unknownOutcome("Incognito mutation has no confirmed commit receipt");
@@ -308,6 +305,7 @@ export function createIncognitoSessionFacts(
           signal,
           (retained) => {
             let phase: "prepare" | "transaction" | "commit" = "prepare";
+            let entryGuarded: unknown;
             const admission = createSqliteWorkerOperationAdmission((requested, grant) =>
               withGrant(() => {
                 const request = restrict ? restrict(requested) : requested;
@@ -329,7 +327,13 @@ export function createIncognitoSessionFacts(
                     changing
                       ? !(
                           (phase === "prepare" && request.stage === "transaction") ||
-                          (phase === "transaction" && request.stage === "commit")
+                          (phase === "transaction" && request.stage === "commit") ||
+                          isIncognitoEntryValidationGrant(
+                            captured.type,
+                            phase,
+                            request,
+                            entryGuarded,
+                          )
                         )
                       : request.stage !== "prepare"
                   ) {
@@ -378,13 +382,18 @@ export function createIncognitoSessionFacts(
                   }
                   publication?.authorize(
                     request.stage === "prepare" ? "transaction" : request.stage,
-                    request.facts.pendingHistory,
+                    publication.factsKey === "entry"
+                      ? request.facts.entry
+                      : request.facts.pendingHistory,
                   );
                   if (request.stage === "commit") {
                     postimage = facts;
                     companion?.beforeCommit();
                   }
                   phase = request.stage;
+                  entryGuarded = isRecord(request.facts.entry)
+                    ? request.facts.entry.guarded
+                    : undefined;
                 }
                 authority.assertCurrent();
                 assertActorCurrent();
@@ -402,6 +411,29 @@ export function createIncognitoSessionFacts(
         );
       };
       return {
+        entry: <Key extends keyof IncognitoEntryOperations>(
+          authority: IncognitoSessionAuthority,
+          command: { type: Key; input: IncognitoEntryOperations[Key]["input"] },
+          signal?: AbortSignal,
+          onCommitted?: (value: IncognitoEntryOperations[Key]["output"]) => void,
+          onRead?: (value: IncognitoEntryOperations[Key]["output"]) => void,
+          authorizePrepared?: () => void,
+        ): Promise<IncognitoEntryOperations[Key]["output"]> =>
+          perform(
+            authority,
+            command,
+            command.type.endsWith(".commit"),
+            (result) => {
+              onRead?.(result.value);
+              return result.value;
+            },
+            signal,
+            undefined,
+            false,
+            incognitoEntryPublication(command.type, authorizePrepared),
+            undefined,
+            onCommitted ? (result) => onCommitted(result.value) : undefined,
+          ),
         /** Join a shared-owner composition without holding this actor's FIFO turn. */
         withSharedState<T>(operation: () => Promise<T>): Promise<T> {
           assertOutsideGrant();
