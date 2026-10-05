@@ -16,11 +16,10 @@ vi.mock("./send.js", () => ({
   createQuickReplyItems: vi.fn(),
   pushFlexMessage: vi.fn(),
   pushLocationMessage: vi.fn(),
-  pushMessageLine: vi.fn(),
+  pushMessageLine: mediaSend,
   pushMessagesLine: vi.fn(),
   pushTemplateMessage: vi.fn(),
   pushTextMessageWithQuickReplies: vi.fn(),
-  sendMessageLine: mediaSend,
 }));
 
 const cfg = { channels: { line: {} } } as OpenClawConfig;

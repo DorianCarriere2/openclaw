@@ -114,9 +114,8 @@ describe("LINE send helpers", () => {
     {
       label: "reply",
       send: () =>
-        sendModule.sendMessageLine("U123", "Hello", {
+        sendModule.replyMessageLine("reply-token", [{ type: "text", text: "Hello" }], {
           cfg: LINE_TEST_CFG,
-          replyToken: "reply-token",
         }),
       provider: replyMessageMock,
     },
@@ -473,7 +472,7 @@ describe("LINE send helpers", () => {
   });
 
   it("pushes images via normalized LINE target", async () => {
-    const result = await sendModule.sendMessageLine("line:user:U123", "", {
+    const result = await sendModule.pushMessageLine("line:user:U123", "", {
       cfg: LINE_TEST_CFG,
       verbose: true,
       mediaUrl: "https://example.com/original.jpg",
@@ -517,52 +516,50 @@ describe("LINE send helpers", () => {
     expect(result.receipt.platformMessageIds).toEqual(["613452345678901234", "613452345678901235"]);
   });
 
-  it("replies when reply token is provided", async () => {
-    const result = await sendModule.sendMessageLine("line:group:C1", "Hello", {
+  it("replies with the caller's prepared messages", async () => {
+    const messages = [
+      {
+        type: "image" as const,
+        originalContentUrl: "https://example.com/media.jpg",
+        previewImageUrl: "https://example.com/media.jpg",
+      },
+      { type: "text" as const, text: "Hello" },
+    ];
+    await sendModule.replyMessageLine("reply-token", messages, {
       cfg: LINE_TEST_CFG,
-      replyToken: "reply-token",
-      mediaUrl: "https://example.com/media.jpg",
       verbose: true,
     });
 
-    expect(replyMessageMock).toHaveBeenCalledTimes(1);
-    expect(pushMessageMock).not.toHaveBeenCalled();
-    expect(replyMessageMock).toHaveBeenCalledWith({
+    expect(replyMessageMock).toHaveBeenCalledExactlyOnceWith({
       replyToken: "reply-token",
-      messages: [
-        {
-          type: "image",
-          originalContentUrl: "https://example.com/media.jpg",
-          previewImageUrl: "https://example.com/media.jpg",
-        },
-        {
-          type: "text",
-          text: "Hello",
-        },
-      ],
+      messages,
     });
-    expect(logVerboseMock).toHaveBeenCalledWith("line: replied to C1");
-    expect(result).toEqual(expectedMediaSendResult("C1", "reply", 2));
+    expect(pushMessageMock).not.toHaveBeenCalled();
+    expect(logVerboseMock).toHaveBeenCalledWith("line: replied with 2 messages");
   });
 
-  it("preserves every provider message id returned by a LINE reply", async () => {
+  it("preserves all accepted reply ids when activity recording fails", async () => {
     replyMessageMock.mockResolvedValueOnce({
       sentMessages: [{ id: "713452345678901234" }, { id: "713452345678901235" }],
     });
-
-    const result = await sendModule.sendMessageLine("line:group:C1", "Hello", {
-      cfg: LINE_TEST_CFG,
-      replyToken: "reply-token",
-      mediaUrl: "https://example.com/media.jpg",
+    recordChannelActivityMock.mockImplementationOnce(() => {
+      throw new Error("activity store unavailable");
     });
 
-    expect(result.messageId).toBe("713452345678901234");
-    expect(result.receipt.platformMessageIds).toEqual(["713452345678901234", "713452345678901235"]);
+    const caught = await capturePartialDelivery(() =>
+      sendModule.replyMessageLine("reply-token", [{ type: "text", text: "Hello" }], {
+        cfg: LINE_TEST_CFG,
+      }),
+    );
+    expect(caught.deliveryResult).toEqual({
+      messageIds: ["713452345678901234", "713452345678901235"],
+      visibleReplySent: true,
+    });
   });
 
   it.each(sendCases)(
     "preserves a finalized $label when activity recording fails",
-    async ({ send, provider }) => {
+    async ({ label, send, provider }) => {
       provider.mockResolvedValueOnce({ sentMessages: [{ id: "line-provider-final" }] });
       recordChannelActivityMock.mockImplementationOnce(() => {
         throw new Error("activity store unavailable");
@@ -571,18 +568,22 @@ describe("LINE send helpers", () => {
       const caught = await capturePartialDelivery(send);
       expect(caught.deliveryResult).toMatchObject({
         messageIds: ["line-provider-final"],
-        receipt: {
-          primaryPlatformMessageId: "line-provider-final",
-          platformMessageIds: ["line-provider-final"],
-          threadId: "U123",
-          parts: [
-            {
-              platformMessageId: "line-provider-final",
-              kind: "text",
-              raw: { chatId: "U123", meta: { messageCount: 1 } },
-            },
-          ],
-        },
+        ...(label === "push"
+          ? {
+              receipt: {
+                primaryPlatformMessageId: "line-provider-final",
+                platformMessageIds: ["line-provider-final"],
+                threadId: "U123",
+                parts: [
+                  {
+                    platformMessageId: "line-provider-final",
+                    kind: "text",
+                    raw: { chatId: "U123", meta: { messageCount: 1 } },
+                  },
+                ],
+              },
+            }
+          : {}),
         visibleReplySent: true,
       });
     },
@@ -615,9 +616,8 @@ describe("LINE send helpers", () => {
       input.operation === "push"
         ? () => sendModule.pushMessageLine("U123", "Hello", { cfg: LINE_TEST_CFG })
         : () =>
-            sendModule.sendMessageLine("U123", "Hello", {
+            sendModule.replyMessageLine("reply-token", [{ type: "text", text: "Hello" }], {
               cfg: LINE_TEST_CFG,
-              replyToken: "reply-token",
             });
 
     const caught = await capturePartialDelivery(send);
@@ -764,9 +764,8 @@ describe("LINE send helpers", () => {
     {
       label: "reply",
       send: () =>
-        sendModule.sendMessageLine("U123", "Hello", {
+        sendModule.replyMessageLine("reply-token", [{ type: "text", text: "Hello" }], {
           cfg: LINE_TEST_CFG,
-          replyToken: "reply-token",
         }),
       provider: replyMessageMock,
     },
@@ -805,7 +804,7 @@ describe("LINE send helpers", () => {
   it("preserves literal internal-looking text in low-level sends", async () => {
     const text = "⚠️ 🛠️ `search repos (agent)` failed";
 
-    await sendModule.sendMessageLine("line:user:U123", text, { cfg: LINE_TEST_CFG });
+    await sendModule.pushMessageLine("line:user:U123", text, { cfg: LINE_TEST_CFG });
 
     expect(pushMessageMock).toHaveBeenCalledWith({
       to: "U123",
@@ -814,7 +813,7 @@ describe("LINE send helpers", () => {
   });
 
   it("sends a bare audio URL using the kind inferred by the LINE media owner", async () => {
-    await sendModule.sendMessageLine("line:user:U123", "", {
+    await sendModule.pushMessageLine("line:user:U123", "", {
       cfg: LINE_TEST_CFG,
       mediaUrl: "https://example.com/voice.m4a",
     });
@@ -832,7 +831,7 @@ describe("LINE send helpers", () => {
   });
 
   it("forwards explicit video options through the shared LINE media owner", async () => {
-    await sendModule.sendMessageLine("line:user:U100", "Video", {
+    await sendModule.pushMessageLine("line:user:U100", "Video", {
       cfg: LINE_TEST_CFG,
       mediaUrl: "https://example.com/video.mp4",
       mediaKind: "video",
@@ -856,7 +855,7 @@ describe("LINE send helpers", () => {
 
   it("keeps a missing explicit video preview as a visible caller error", async () => {
     await expect(
-      sendModule.sendMessageLine("line:user:U200", "Video", {
+      sendModule.pushMessageLine("line:user:U200", "Video", {
         cfg: LINE_TEST_CFG,
         mediaUrl: "https://example.com/video.mp4",
         mediaKind: "video",
@@ -868,7 +867,7 @@ describe("LINE send helpers", () => {
 
   it("validates image URLs before sending", async () => {
     await expect(
-      sendModule.sendMessageLine("line:user:U123", "", {
+      sendModule.pushMessageLine("line:user:U123", "", {
         cfg: LINE_TEST_CFG,
         mediaUrl: "http://example.com/private.jpg",
         mediaKind: "image",

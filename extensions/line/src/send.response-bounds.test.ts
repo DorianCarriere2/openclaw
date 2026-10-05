@@ -156,9 +156,8 @@ describe("LINE bounded provider responses", () => {
     lineFetchMock.mockResolvedValueOnce(response);
 
     const caught = await captureError(() =>
-      sendModule.sendMessageLine("U123", "Hello", {
+      sendModule.replyMessageLine("reply-token", [{ type: "text", text: "Hello" }], {
         cfg: LINE_TEST_CFG,
-        replyToken: "reply-token",
       }),
     );
 

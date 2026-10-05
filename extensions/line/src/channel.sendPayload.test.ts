@@ -382,7 +382,7 @@ it("reports caption and media receipts through the registered media adapter", as
     mediaUrl: imageUrl,
     onDeliveryResult,
   });
-  expect(mocks.sendMessageLine).toHaveBeenCalledWith(to, "", {
+  expect(mocks.pushMessageLine).toHaveBeenCalledWith(to, "", {
     ...primaryOptions,
     mediaUrl: imageUrl,
   });
@@ -490,7 +490,7 @@ it.each([false, true])(
         visibleReplySent: true,
       },
     });
-    expect(mocks.sendMessageLine).toHaveBeenCalledOnce();
+    expect(mocks.pushMessageLine).toHaveBeenCalledOnce();
     expect(mocks.pushTextMessageWithQuickReplies).toHaveBeenCalledOnce();
     if (onDeliveryResult) {
       expect(order(onDeliveryResult)).toBeLessThan(order(mocks.pushTextMessageWithQuickReplies));
