@@ -67,6 +67,35 @@ suite.define(() => {
             timestamp: now - 9_000,
             __openclaw: { id: "delegation", seq: 2, runId },
           },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "toolCall",
+                id: "launch",
+                name: "sessions_spawn",
+                arguments: {
+                  label: "Backend implementation",
+                  task: "Implement the backend. Reply with the result only.",
+                },
+              },
+            ],
+            timestamp: now - 8_500,
+            __openclaw: { id: "launch-call", seq: 3, runId },
+          },
+          {
+            role: "toolResult",
+            toolCallId: "launch",
+            toolName: "sessions_spawn",
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ status: "accepted", childSessionKey: child.key }, null, 2),
+              },
+            ],
+            timestamp: now - 8_400,
+            __openclaw: { id: "launch-result", seq: 4, runId },
+          },
         ];
         const gateway = await installMockGateway(page, {
           sessionKey: parent.key,
@@ -115,6 +144,13 @@ suite.define(() => {
           .getByText("1 subagent running", { exact: true })
           .waitFor();
         expect(await indicator.textContent()).not.toContain("Waiting on");
+        // Its launch row reads as the subagent: its name, not its assignment, and its state.
+        const launchRow = activePane.locator(".chat-tool-row--subagent");
+        const launchName = launchRow.locator(".chat-tool-row__subagent-link");
+        const launchState = launchRow.locator(".chat-tool-row__subagent-state");
+        await launchState.getByText("running", { exact: true }).waitFor();
+        expect((await launchName.textContent())?.trim()).toBe("Backend implementation");
+        expect(await launchRow.textContent()).not.toContain("Reply with the result only");
         // Measure the phone layout itself, not the frame before the shell collapses.
         await page.setViewportSize({ width: 390, height: 900 });
         await page.locator(".shell--mobile-nav").waitFor();
@@ -144,7 +180,7 @@ suite.define(() => {
             { type: "toolCall", id: "handoff", name: "sessions_yield", arguments: {} },
           ],
           timestamp: now + 1,
-          __openclaw: { id: "yield-call", seq: 3, runId },
+          __openclaw: { id: "yield-call", seq: 5, runId },
         };
         const yieldResult = {
           role: "toolResult",
@@ -152,7 +188,7 @@ suite.define(() => {
           toolName: "sessions_yield",
           content: [{ type: "text", text: '{"status":"yielded"}' }],
           timestamp: now + 2,
-          __openclaw: { id: "yield-result", seq: 4, runId },
+          __openclaw: { id: "yield-result", seq: 6, runId },
         };
         const yieldedHistory = [...history, yieldCall, yieldResult];
         const waitingParent: GatewaySessionRow = {
@@ -173,7 +209,7 @@ suite.define(() => {
           sessionKey: parent.key,
           message: yieldResult,
           messageId: "yield-result",
-          messageSeq: 4,
+          messageSeq: 6,
           hasActiveRun: true,
           session: delegatingParent,
         });
@@ -381,7 +417,7 @@ suite.define(() => {
           content: answerText,
           stopReason: "stop",
           timestamp: now + 66_000,
-          __openclaw: { id: "answer", seq: 5, runId: "parent-resumed-run" },
+          __openclaw: { id: "answer", seq: 7, runId: "parent-resumed-run" },
         };
         const finishedParent: GatewaySessionRow = {
           ...resumedParent,
@@ -397,6 +433,7 @@ suite.define(() => {
         };
         const finishedChild = {
           ...settledChild,
+          runtimeMs: 64_000,
           updatedAt: now + 67_000,
           snapshotAt: now + 67_000,
         };
@@ -431,6 +468,12 @@ suite.define(() => {
         );
         expect(await block.locator(".chat-turn-recap").count()).toBe(1);
         expect(await activePane.locator(".chat-group.assistant").count()).toBe(1);
+        // The finished subagent's row shows how long it took, and its name opens its session.
+        await expect
+          .poll(async () => (await launchState.textContent())?.trim())
+          .toMatch(/^1m\s4s$/u);
+        await launchName.click();
+        await expect.poll(() => selectedTitle.textContent()).toBe("Backend implementation");
       },
     );
   });

@@ -84,7 +84,17 @@ export function summarizeAgentActivity(
       .filter((item) => !item.suppressChannelProgress)
       .map((item) => [item.toolCallId ?? item.itemId, item]),
   );
-  const counts = { commands: 0, reads: 0, edits: 0, writes: 0, searches: 0, fetches: 0, other: 0 };
+  // Key order is the order a summary lists them; subagents close it.
+  const counts = {
+    commands: 0,
+    reads: 0,
+    edits: 0,
+    writes: 0,
+    searches: 0,
+    fetches: 0,
+    other: 0,
+    subagents: 0,
+  };
   const outcomes = { failed: 0, blocked: 0, skipped: 0, unknown: 0 };
   let total = 0;
   for (const item of operations.values()) {
@@ -108,8 +118,10 @@ export function summarizeAgentActivity(
 
 const ACTIVITY_CATEGORIES = new Map<
   string,
-  "commands" | "reads" | "edits" | "writes" | "searches" | "fetches"
+  "commands" | "reads" | "edits" | "writes" | "searches" | "fetches" | "subagents"
 >([
+  // A launched subagent is a worker, not one more operation of the launcher.
+  ["sessions_spawn", "subagents"],
   ["exec", "commands"],
   ["bash", "commands"],
   ["shell", "commands"],

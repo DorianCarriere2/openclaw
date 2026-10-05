@@ -27,6 +27,16 @@ describe("summarizeToolGroup", () => {
     ).toBe("1 edit · 2 other operations");
   });
 
+  it("counts launched subagents apart from the launcher's other operations", () => {
+    const launches = ["story", "puzzle", "cafe"].map((id) =>
+      prepared(`tool:${id}`, "Sub-agent", { name: "sessions_spawn", toolCallId: id }),
+    );
+    expect(
+      summarizeToolGroup([prepared("search", "Find notes", { name: "custom_tool" }), ...launches]),
+    ).toBe("1 other operation · 3 subagents");
+    expect(summarizeToolGroup(launches.slice(0, 1))).toBe("1 subagent");
+  });
+
   it("replaces running state with the same operation's outcome without counting suppressed siblings", () => {
     expect(
       summarizeToolGroup([

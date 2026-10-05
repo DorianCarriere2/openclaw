@@ -7,6 +7,7 @@ import { icons } from "../../../components/icons.ts";
 import type { ToolCard } from "../../../lib/chat/chat-types.ts";
 import { resolveToolDisplayIcon } from "../../../lib/chat/tool-display-icon.ts";
 import { resolveToolDisplay } from "../../../lib/chat/tool-display.ts";
+import { spawnedSubagentLabel } from "../chat-spawned-subagent.ts";
 import type { PluginToolIcons } from "../chat-tool-icon-controller.ts";
 import { renderToolIcon } from "./chat-tool-cards.ts";
 
@@ -45,12 +46,21 @@ export function selectActivityHeadline(
       pending.push(...child.children);
     }
   }
+  // A launched subagent is named by its label; its other launch settings are detail.
+  let subagentLabel: string | undefined;
+  for (const [card, item] of preparedByCard) {
+    if (item === operation) {
+      subagentLabel = spawnedSubagentLabel(card);
+      break;
+    }
+  }
   return operation.title.trim()
     ? {
         key: operation.toolCallId ?? operation.itemId,
         // Prepared metadata owns the purpose; never strip a localized tool prefix.
         title:
           (!operation.status ? operation.summary : undefined) ??
+          subagentLabel ??
           operation.meta ??
           (operation.title === resolveToolDisplay({ name: operation.name }).label
             ? ""

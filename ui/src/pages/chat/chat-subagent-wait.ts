@@ -6,6 +6,11 @@ import {
   resolveUiSessionNavigationParentKey,
 } from "../../lib/sessions/session-key.ts";
 import { pendingSessionsYield } from "./chat-sessions-yield.ts";
+import {
+  isUnfinishedSubagent,
+  spawnedSubagentsRenderKey,
+  type SubagentRoster,
+} from "./chat-spawned-subagent.ts";
 
 export type ChatSubagentWait = {
   /** When the parent handed off; null when loaded history cannot place it. */
@@ -21,7 +26,7 @@ export type ChatSubagentWait = {
  * A wait behind a loaded handoff is that run's own status. Any other wait
  * follows a turn that already ended, so it stays a row after the transcript.
  */
-export function placedSubagentWait(
+function placedSubagentWait(
   wait: ChatSubagentWait | null,
 ): { startedAt: number; runId: string } | undefined {
   return wait?.runId && wait.startedAt !== null
@@ -33,16 +38,11 @@ export function placedSubagentWait(
  * Everything the working line draws about subagents, so rows without one keep
  * memoizing across roster patches.
  */
-export function subagentStatusRenderKey(wait: ChatSubagentWait | null, running: number): string {
+function subagentStatusRenderKey(wait: ChatSubagentWait | null, running: number): string {
   return JSON.stringify(
     wait ? [wait.startedAt, wait.runningCount, wait.child?.key, wait.child?.label] : [running],
   );
 }
-
-type SubagentRoster = {
-  subagentSessions?: readonly GatewaySessionRow[];
-  subagentSessionsHydrated?: boolean;
-};
 
 // A count or a name says which children are left, so it waits for the pane's
 // own child query. Rows seeded from another list can hold only some of them.
@@ -54,8 +54,7 @@ function unfinishedChildren(session: GatewaySessionRow, roster: SubagentRoster) 
     const parent = resolveUiSessionNavigationParentKey(row);
     return (
       !row.archived &&
-      // A child that handed off to its own subagents is still unfinished.
-      (isSessionRunActive(row) || row.hasActiveSubagentRun === true) &&
+      isUnfinishedSubagent(row) &&
       !areUiSessionKeysEquivalent(row.key, session.key) &&
       (parent
         ? areUiSessionKeysEquivalent(parent, session.key)
@@ -65,7 +64,7 @@ function unfinishedChildren(session: GatewaySessionRow, roster: SubagentRoster) 
 }
 
 /** Unfinished direct children to mention beside the session's own work; 0 when unknown. */
-export function countRunningSubagents(
+function countRunningSubagents(
   input: SubagentRoster & { selectedSession: GatewaySessionRow | undefined },
 ): number {
   const session = input.selectedSession;
@@ -118,5 +117,26 @@ export function resolveChatSubagentWait(
           },
         }
       : {}),
+  };
+}
+
+/**
+ * Everything the transcript reads from the session's subagent roster: the
+ * wait and where it is placed, the running count, and the keys that tell
+ * memoized rows when any of it changed.
+ */
+export function projectSubagentStatus(
+  input: Parameters<typeof resolveChatSubagentWait>[0],
+  searchFiltering: boolean,
+) {
+  const wait = resolveChatSubagentWait(input);
+  const running = countRunningSubagents(input);
+  return {
+    wait,
+    // Search results omit the live wait line.
+    placedWait: searchFiltering ? undefined : placedSubagentWait(wait),
+    running,
+    statusKey: subagentStatusRenderKey(wait, running),
+    rowsKey: spawnedSubagentsRenderKey(input.subagentSessions),
   };
 }

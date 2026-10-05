@@ -51,9 +51,18 @@ block, for example when the request is older than the loaded history, both
 lines describe the resumed run alone. A message you send after the handoff
 starts a block of its own, with that run's own clock and closing line.
 
-Counts and names come from the session's subagent list. Until the pane has
-loaded it, the working indicator shows no count and a wait reads **Waiting on
-subagents**. The pane does not load that list when
+In the tool activity, a subagent's launch row shows the label its launch gave
+it, when it gave one, rather than its instructions, followed by **running**
+while it works and by its duration once it has finished. Selecting the name
+opens that subagent's session; the rest of the row still expands the launch's
+details. Collapsed activity counts subagents on their own, such as **1 other
+operation · 3 subagents**.
+
+The running count, the wait's count and name, and a launch row's state and link
+come from the session's subagent list. Until the pane has loaded it, the working
+indicator shows no count and a wait reads **Waiting on subagents**; a launch
+row whose subagent is not in the list shows its name alone. The pane does not
+load that list when
 [Swarm is turned off](/tools/swarm) with `tools.swarm: false`.
 
 When your role or session policy blocks messages, the composer is disabled and

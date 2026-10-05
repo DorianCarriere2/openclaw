@@ -2,7 +2,7 @@ import { render } from "lit";
 import { describe, expect, it, vi } from "vitest";
 import type { GatewaySessionRow } from "../../api/types.ts";
 import {
-  countRunningSubagents,
+  projectSubagentStatus,
   resolveChatSubagentWait,
   type ChatSubagentWait,
 } from "./chat-subagent-wait.ts";
@@ -173,13 +173,18 @@ describe("chat waiting on subagents", () => {
   it("counts unfinished children beside the session's own work once the roster has loaded", () => {
     const working = { ...parent, hasActiveRun: true };
     const roster = [child, { ...child, key: "agent:main:subagent:other" }];
-    const count = (input: Partial<Parameters<typeof countRunningSubagents>[0]> = {}) =>
-      countRunningSubagents({
-        selectedSession: working,
-        subagentSessions: roster,
-        subagentSessionsHydrated: true,
-        ...input,
-      });
+    const count = (input: Partial<Parameters<typeof projectSubagentStatus>[0]> = {}) =>
+      projectSubagentStatus(
+        {
+          selectedSession: working,
+          subagentSessions: roster,
+          subagentSessionsHydrated: true,
+          runWorking: true,
+          messages: [],
+          ...input,
+        },
+        false,
+      ).running;
     expect(count()).toBe(2);
     expect(count({ subagentSessions: [{ ...child, hasActiveRun: false }] })).toBe(0);
     expect(count({ subagentSessionsHydrated: false })).toBe(0);
