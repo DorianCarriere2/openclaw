@@ -362,11 +362,13 @@ export async function resolveApiKeyForProfile(
   params: ResolveApiKeyForProfileParams,
 ): Promise<ResolveApiKeyForProfileResult | null> {
   params.signal?.throwIfAborted();
-  return isUserModelAuthProfileId(params.profileId)
+  const resolved = isUserModelAuthProfileId(params.profileId)
     ? ((await withPersonalAuthProfileStore(params.profileId, (owner) =>
         resolveApiKeyForProfileOwned(params, owner),
       )) ?? null)
-    : resolveApiKeyForProfileOwned(params);
+    : await resolveApiKeyForProfileOwned(params);
+  params.signal?.throwIfAborted();
+  return resolved;
 }
 
 async function resolveApiKeyForProfileOwned(

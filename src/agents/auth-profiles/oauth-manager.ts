@@ -125,7 +125,9 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
           context.validateCredential?.(current),
         )
       : credential;
-    context.validateCredential?.(accepted);
+    if (context.personalStore) {
+      context.validateCredential?.(accepted);
+    }
     return { apiKey, credential: accepted };
   }
 
