@@ -630,7 +630,7 @@ async function withWorkerAdmission<T>(
           }
         : {},
     );
-    releaseExecution = execution.release;
+    releaseExecution = () => execution.release();
     const source: Parameters<typeof execution.prepare>[0] = {
       assertCurrent: assertAdmission,
       createAdmission: (binding) => () => ({

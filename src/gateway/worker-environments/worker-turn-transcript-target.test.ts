@@ -1,5 +1,5 @@
-import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it, vi } from "vitest";
+import { observeHostDataSql } from "../../../test/helpers/sqlite-statement-execution-counter.js";
 import { upsertSessionEntryCore } from "../../config/sessions/session-accessor.js";
 import { SQLITE_IDLE_HANDLE_TTL_MS } from "../../infra/sqlite-handle-lifecycle.js";
 import { closeCachedOpenClawAgentDatabase } from "../../state/openclaw-agent-db-lifecycle.js";
@@ -52,12 +52,11 @@ it("preadmits cloud transcript guards and retains their handle through turn sett
       };
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       const inspections: string[] = [];
-      const prepare = DatabaseSync.prototype.prepare;
-      const observer = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (
-        this: DatabaseSync,
-        sql,
-      ) {
-        const location = this.location();
+      const observer = observeHostDataSql((sql, observedDatabase) => {
+        if (!observedDatabase) {
+          return;
+        }
+        const location = observedDatabase.location();
         if (
           (location === database.path || location === null) &&
           /sqlite_(?:schema|master)|PRAGMA\s+(?:index_|table_|quick_check|integrity_check|foreign_key_check)/i.test(
@@ -66,7 +65,6 @@ it("preadmits cloud transcript guards and retains their handle through turn sett
         ) {
           inspections.push(sql);
         }
-        return prepare.call(this, sql);
       });
       try {
         const result = await withWorkerTurnTranscriptDatabase(turn, controls, async (pinned) => {
@@ -88,7 +86,7 @@ it("preadmits cloud transcript guards and retains their handle through turn sett
         expect(releaseAuthority).toHaveBeenCalledOnce();
         expect(inspections).toEqual([]);
       } finally {
-        observer.mockRestore();
+        observer.restore();
         vi.useRealTimers();
       }
     } finally {

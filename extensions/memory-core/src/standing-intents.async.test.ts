@@ -400,30 +400,34 @@ describe("standing-intent admitted operations", () => {
     "propagates rejected %s writes without changing rows",
     async (action) => {
       const existing = await seed(action === "list");
-      using _fault = failStandingIntentWrites(action);
-      const held = await holdWriter();
-      const execute = createStandingIntentExecutor({
-        agentId: "main",
-        provider: "webchat",
-        senderId: "owner",
-      });
-      const work = keep(
-        execute("intent-call", {
-          action,
-          id: existing.id,
-          description: "Check migration.",
-          triggerKeywords: ["migration"],
-        }),
-      );
-      await expectWaiting(work, held.entered);
-      held.release();
-      await expect(work).rejects.toThrow("fixture standing-intent write rejected");
-      expect(readStored(existing.id)?.status).toBe("armed");
-      expect(
-        openOpenClawAgentDatabase({ agentId: "main" })
-          .db.prepare("SELECT COUNT(*) AS count FROM standing_intents")
-          .get()?.count,
-      ).toBe(1);
+      const fault = failStandingIntentWrites(action);
+      try {
+        const held = await holdWriter();
+        const execute = createStandingIntentExecutor({
+          agentId: "main",
+          provider: "webchat",
+          senderId: "owner",
+        });
+        const work = keep(
+          execute("intent-call", {
+            action,
+            id: existing.id,
+            description: "Check migration.",
+            triggerKeywords: ["migration"],
+          }),
+        );
+        await expectWaiting(work, held.entered);
+        held.release();
+        await expect(work).rejects.toThrow("fixture standing-intent write rejected");
+        expect(readStored(existing.id)?.status).toBe("armed");
+        expect(
+          openOpenClawAgentDatabase({ agentId: "main" })
+            .db.prepare("SELECT COUNT(*) AS count FROM standing_intents")
+            .get()?.count,
+        ).toBe(1);
+      } finally {
+        fault.mockRestore();
+      }
     },
   );
 
@@ -454,23 +458,27 @@ describe("standing-intent admitted operations", () => {
   it("keeps rejected prompt matching fail-open without spending its fire budget", async () => {
     const existing = await seed();
     const { runner, logger } = await registerHooks();
-    using _fault = failStandingIntentWrites("match");
-    const held = await holdWriter();
-    const work = keep(
-      runner.runBeforePromptBuild(
-        { prompt: "launch", messages: [] },
-        { ...context, trigger: "user" },
-      ),
-    );
-    held.release();
-    expect((await work)?.prependContext).toBeUndefined();
-    expect(readStored(existing.id)?.fire_count).toBe(0);
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("standing intent matching failed"),
-    );
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("fixture standing-intent write rejected"),
-    );
+    const fault = failStandingIntentWrites("match");
+    try {
+      const held = await holdWriter();
+      const work = keep(
+        runner.runBeforePromptBuild(
+          { prompt: "launch", messages: [] },
+          { ...context, trigger: "user" },
+        ),
+      );
+      held.release();
+      expect((await work)?.prependContext).toBeUndefined();
+      expect(readStored(existing.id)?.fire_count).toBe(0);
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("standing intent matching failed"),
+      );
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("fixture standing-intent write rejected"),
+      );
+    } finally {
+      fault.mockRestore();
+    }
   });
 
   it("does not spend a fire after the registered prompt hook times out", async () => {

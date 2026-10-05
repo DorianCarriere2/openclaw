@@ -1,8 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it, vi } from "vitest";
+import { observeHostDataSql } from "../../test/helpers/sqlite-statement-execution-counter.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { openNodeSqliteDatabase } from "../infra/node-sqlite.js";
 import { getAdmittedSqliteSchemaFacts } from "../infra/sqlite-schema-facts.js";
@@ -45,12 +45,11 @@ afterEach(async () => {
 
 function observeCallerSchemaInspections(...pathnames: string[]) {
   const inspections: string[] = [];
-  const prepare = DatabaseSync.prototype.prepare;
-  const observer = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (
-    this: DatabaseSync,
-    sql,
-  ) {
-    const location = this.location();
+  const observer = observeHostDataSql((sql, database) => {
+    if (!database) {
+      return;
+    }
+    const location = database.location();
     if (
       (location === null || pathnames.includes(location)) &&
       /sqlite_(?:schema|master)|PRAGMA\s+(?:index_|table_|quick_check|integrity_check|foreign_key_check)/i.test(
@@ -59,9 +58,8 @@ function observeCallerSchemaInspections(...pathnames: string[]) {
     ) {
       inspections.push(sql);
     }
-    return prepare.call(this, sql);
   });
-  return { inspections, restore: () => observer.mockRestore() };
+  return { inspections, restore: observer.restore };
 }
 
 it("keeps a worker recreation private until its host creation claim joins native close", async () => {
