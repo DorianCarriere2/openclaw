@@ -221,6 +221,25 @@ describe("analyzeBootstrapBudget", () => {
     expect(analysis.truncatedFiles[0]?.effectiveFileLimit).toBe(4_000);
   });
 
+  it("accounts for an opted-in USER.md budget bounded by bootstrapMaxChars", () => {
+    const raised = analyzeBootstrapBudget({
+      files: [createTruncatedBootstrapFile("USER.md", "/tmp/USER.md", 10_000, 8_000)],
+      bootstrapMaxChars: 20_000,
+      bootstrapTotalMaxChars: 60_000,
+      userBootstrapMaxChars: 8_000,
+    });
+    expect(raised.truncatedFiles[0]?.effectiveFileLimit).toBe(8_000);
+    expect(raised.truncatedFiles[0]?.causes).toEqual(["per-file-limit"]);
+
+    const bounded = analyzeBootstrapBudget({
+      files: [createTruncatedBootstrapFile("USER.md", "/tmp/USER.md", 10_000, 6_000)],
+      bootstrapMaxChars: 6_000,
+      bootstrapTotalMaxChars: 60_000,
+      userBootstrapMaxChars: 8_000,
+    });
+    expect(bounded.truncatedFiles[0]?.effectiveFileLimit).toBe(6_000);
+  });
+
   it("distinguishes lower per-file and exhausted total limits for USER.md", () => {
     const lowerPerFile = analyzeBootstrapBudget({
       files: [createTruncatedBootstrapFile("USER.md", "/tmp/USER.md", 3_000, 2_000)],
