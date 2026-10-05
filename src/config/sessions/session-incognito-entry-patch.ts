@@ -95,9 +95,9 @@ export function patchIncognitoSessionEntry(params: {
             }
           },
           undefined,
-          (refused) => {
-            if (refused) {
-              source.checks[refused.index]?.refuse(refused.facts);
+          (refusedSource) => {
+            if (refusedSource) {
+              source.checks[refusedSource.index]?.refuse(refusedSource.facts);
               throw new Error("Session source refusal omitted its prepared assertion");
             }
             params.assertCommitAllowed?.();
