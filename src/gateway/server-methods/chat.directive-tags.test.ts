@@ -1156,7 +1156,8 @@ async function runNonStreamingChatSend(params: {
     params.context.broadcast.mock.calls.filter(
       ([event, payload]) => event === "chat" && asOptionalRecord(payload)?.state !== "delta",
     );
-  await waitForAssertion(() => expect(terminalCalls()).toHaveLength(1));
+  await params.context.dedupe.waitForResponse(params.idempotencyKey);
+  expect(terminalCalls()).toHaveLength(1);
   return asOptionalRecord(terminalCalls()[0]?.[1]);
 }
 
