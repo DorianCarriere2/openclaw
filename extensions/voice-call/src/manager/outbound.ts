@@ -7,6 +7,7 @@ import {
   resolveVoiceCallSessionKey,
   type CallMode,
 } from "../config.js";
+import { validateDtmfDigits } from "../dtmf.js";
 import { resolvePreferredTtsVoice } from "../tts-provider-voice.js";
 import {
   type EndReason,
@@ -63,12 +64,6 @@ function requireConnectedCall(ctx: CallManagerContext, callId: CallId) {
 
 function isCurrentCall(ctx: Pick<CallManagerContext, "activeCalls">, call: CallRecord): boolean {
   return ctx.activeCalls.get(call.callId) === call && !TerminalStates.has(call.state);
-}
-
-function validateDtmfDigits(digits: string): string | null {
-  return /^[0-9*#wWpP,]+$/.test(digits)
-    ? null
-    : "digits may only contain digits, *, #, comma, w, p";
 }
 
 export async function initiateCall(

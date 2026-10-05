@@ -31,6 +31,7 @@ import {
   type VoiceCallConfig,
 } from "./src/config.js";
 import { createVoiceCallContinueOperationStore } from "./src/gateway-continue-operation.js";
+import { resolveActiveVoiceCallToolScope } from "./src/tool-call-scope.js";
 
 const VOICE_CALL_WRITE_METHOD_SCOPE = { scope: "operator.write" as const };
 const VOICE_CALL_READ_METHOD_SCOPE = { scope: "operator.read" as const };
@@ -106,6 +107,7 @@ type VoiceCallRuntimeGeneration = {
 type VoiceCallRuntimeRegistration = {
   epoch: number;
   generation: VoiceCallRuntimeGeneration;
+  ensureRuntime: () => Promise<VoiceCallRuntime>;
 };
 
 type VoiceCallRuntimeSlot =
@@ -198,20 +200,17 @@ export default definePluginEntry({
     const validation = validateProviderConfig(config);
 
     const runtimeCoordinator = getVoiceCallRuntimeCoordinator();
-    const runtimeRegistration: VoiceCallRuntimeRegistration =
-      api.registrationMode !== "full" && runtimeCoordinator.current
-        ? runtimeCoordinator.current
-        : {
-            epoch: ++runtimeCoordinator.epochCounter,
-            generation: { retired: false },
-          };
+    const runtimeRegistration: VoiceCallRuntimeRegistration = {
+      epoch: ++runtimeCoordinator.epochCounter,
+      generation: { retired: false },
+      ensureRuntime: () => ensureRegisteredRuntime(),
+    };
     const continueOperationStore = createVoiceCallContinueOperationStore({
       config,
       coreConfig: api.config as OpenClawConfig,
     });
     const activateRuntimeGeneration = (generation: VoiceCallRuntimeGeneration) =>
       activateVoiceCallRuntimeGeneration(runtimeCoordinator, runtimeRegistration, generation);
-
     const ensureRuntimeForGeneration = async (
       runtimeGeneration: VoiceCallRuntimeGeneration,
     ): Promise<VoiceCallRuntime> => {
@@ -282,15 +281,14 @@ export default definePluginEntry({
           ttsRuntime: api.runtime.tts,
           logger: api.logger,
         });
-        const startingSlot: VoiceCallRuntimeSlot = {
+        runtimeCoordinator.slot = {
           state: "starting",
           owner: runtimeGeneration,
           promise: runtimePromise,
         };
-        runtimeCoordinator.slot = startingSlot;
       }
     };
-    const ensureRuntime = async (
+    const ensureRegisteredRuntime = async (
       runtimeGeneration = runtimeRegistration.generation,
     ): Promise<VoiceCallRuntime> => {
       try {
@@ -305,6 +303,8 @@ export default definePluginEntry({
       }
     };
 
+    // Callers follow the service owner; only service.start may replace an existing owner.
+    const ensureRuntime = () => (runtimeCoordinator.current ?? runtimeRegistration).ensureRuntime();
     const commands = createVoiceCallCommandService(ensureRuntime);
     const registerGatewayCommand = (
       method: string,
@@ -458,7 +458,7 @@ export default definePluginEntry({
       label: "Voice Call",
       description: "Make phone calls and have voice conversations via the voice-call plugin.",
       parameters: VoiceCallToolSchema,
-      async execute(_toolCallId, params) {
+      async execute(_toolCallId, params, signal) {
         const rawParams = asParamRecord(params);
         const requesterSessionKey = normalizeOptionalString(toolContext.sessionKey);
         // Agent ownership and requester lineage come from trusted tool context.
@@ -469,7 +469,14 @@ export default definePluginEntry({
         const agentId = contextAgentId ? normalizeAgentId(contextAgentId) : undefined;
         try {
           // Preserve tool error precedence: runtime availability is checked before model input.
-          await ensureRuntime();
+          const rt = await ensureRuntime();
+          const callScope = await resolveActiveVoiceCallToolScope({
+            action: rawParams.action,
+            binding: toolContext.toolBindings?.voice_call,
+            requestedCallId: rawParams.callId,
+            runtime: rt,
+            signal,
+          });
           const initiateParams = {
             to: normalizeOptionalString(rawParams.to),
             message: normalizeOptionalString(rawParams.message),
@@ -512,12 +519,21 @@ export default definePluginEntry({
               case "send_dtmf":
                 return json(
                   await commands.sendDtmf(
-                    normalizeOptionalString(rawParams.callId),
+                    callScope?.callId ?? normalizeOptionalString(rawParams.callId),
                     normalizeOptionalString(rawParams.digits),
+                    callScope?.execution,
                   ),
                 );
               case "end_call":
-                return json(await commands.endCall(normalizeOptionalString(rawParams.callId)));
+                if (!callScope) {
+                  signal?.throwIfAborted();
+                }
+                return json(
+                  await commands.endCall(
+                    callScope?.callId ?? normalizeOptionalString(rawParams.callId),
+                    callScope?.execution,
+                  ),
+                );
               case "get_status": {
                 const callId = normalizeOptionalString(rawParams.callId);
                 if (!callId) {
@@ -596,8 +612,7 @@ export default definePluginEntry({
           api.logger.error(`[voice-call] Runtime not started: ${error.message}`);
           return;
         }
-        const startingGeneration = runtimeRegistration.generation;
-        void ensureRuntime(startingGeneration).catch((err: unknown) => {
+        void ensureRegisteredRuntime().catch((err: unknown) => {
           if (err instanceof VoiceCallRuntimeLifecycleError) {
             return;
           }

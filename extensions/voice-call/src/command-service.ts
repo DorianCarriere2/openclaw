@@ -128,18 +128,29 @@ export function createVoiceCallCommandService(ensureRuntime: () => Promise<Voice
       return { success: true };
     },
 
-    async sendDtmf(callId?: string, digits?: string) {
+    async sendDtmf(callId?: string, digits?: string, execution?: { runtime?: VoiceCallRuntime }) {
       const resolvedCallId = requireInput(callId, "callId and digits required");
       const resolvedDigits = requireInput(digits, "callId and digits required");
-      const rt = await ensureRuntime();
+      const rt = execution?.runtime ?? (await ensureRuntime());
+      if (rt.config.realtime.enabled) {
+        const realtimeResult = rt.webhookServer
+          .getRealtimeHandler()
+          ?.sendDtmf(resolvedCallId, resolvedDigits);
+        if (realtimeResult?.success) {
+          return { success: true };
+        }
+        if (realtimeResult?.streamActive) {
+          throw new Error(realtimeResult.error || "Realtime DTMF failed");
+        }
+      }
       const result = await rt.manager.sendDtmf(resolvedCallId, resolvedDigits);
       requireSuccess(result, "dtmf failed");
       return { success: true };
     },
 
-    async endCall(callId?: string) {
+    async endCall(callId?: string, execution?: { runtime?: VoiceCallRuntime }) {
       const resolvedCallId = requireInput(callId, "callId required");
-      const rt = await ensureRuntime();
+      const rt = execution?.runtime ?? (await ensureRuntime());
       const result = await rt.manager.endCall(resolvedCallId);
       requireSuccess(result, "end failed");
       return { success: true };
