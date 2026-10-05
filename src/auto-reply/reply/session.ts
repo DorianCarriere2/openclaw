@@ -17,7 +17,7 @@ import { hasProviderOwnedSession } from "../../config/sessions/entry-freshness.j
 import { resolveGroupSessionKey } from "../../config/sessions/group.js";
 import { resolveSessionLifecycleTimestampsAsync } from "../../config/sessions/lifecycle-read.js";
 import {
-  hasTerminalMainSessionTranscriptNewerThanRegistry,
+  hasTerminalMainSessionTranscriptNewerThanRegistrySync,
   isRestartRecoveryTombstone,
   resolveSessionWorkStartError,
 } from "../../config/sessions/lifecycle.js";
@@ -678,7 +678,7 @@ async function initSessionStateAttemptLocked(
     : undefined;
   const terminalMainTranscriptNewerThanRegistry =
     !isSystemEvent &&
-    (await hasTerminalMainSessionTranscriptNewerThanRegistry({
+    (await hasTerminalMainSessionTranscriptNewerThanRegistrySync({
       entry,
       sessionScope,
       sessionKey,
