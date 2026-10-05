@@ -25,7 +25,7 @@ describe("normalizePluginsConfigWithResolver", () => {
   });
 });
 
-describe("resolvePluginActivationStateShared", () => {
+describe("metadata plugin activation policy", () => {
   it.each([
     {
       name: "keeps metadata allowlists strict while runtime honors explicit channel activation",

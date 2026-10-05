@@ -388,6 +388,7 @@ function openAgentDatabaseBackend(
     "session.nativeBindings.delete": loadAgentNativeBindingOperations,
     "session.messageCut.commit": loadAgentMessageCutOperations,
     "trajectory.events.append": loadAgentTrajectoryOperations,
+    "trajectory.retention.begin": loadAgentTrajectoryOperations,
     "trajectory.retention.delete": loadAgentTrajectoryOperations,
     "session.archives.preparePublication": loadAgentArchiveOperations,
     "session.archives.recordPublication": loadAgentArchiveOperations,
