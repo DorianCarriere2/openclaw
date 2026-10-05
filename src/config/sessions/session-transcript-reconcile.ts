@@ -544,7 +544,10 @@ function startPreparedSessionTranscriptIndexReconcile(params: PreparedReconcileP
   state.assertCurrent = () => {
     params.signal?.throwIfAborted();
     params.assertCurrent?.();
-    state.assertOwnerCurrent?.();
+    // Legacy memory readiness can observe a missing owner or a successor; writes retain the fence.
+    if (!memorySource) {
+      state.assertOwnerCurrent?.();
+    }
     incognito?.authority.assertCurrent();
   };
   let entered = false;
@@ -565,6 +568,7 @@ function startPreparedSessionTranscriptIndexReconcile(params: PreparedReconcileP
         while (true) {
           operation.signal.throwIfAborted();
           // A retired pass cannot consume a successor's pending request.
+          memorySource?.assertCurrentOwner();
           state.assertCurrent?.();
           state.pending = false;
           const preferredSessionId = state.preferredSessionId;
