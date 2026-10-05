@@ -710,7 +710,6 @@ describe("session_status tool", () => {
         thinkingLevel: "off",
       },
       [mainKey]: fixtureSession("s-main", {
-        status: "running",
         thinkingLevel: "high",
       }),
     });
@@ -734,9 +733,7 @@ describe("session_status tool", () => {
         updatedAt: 5,
         status: "done",
       },
-      [mainKey]: fixtureSession("s-main", {
-        status: "running",
-      }),
+      [mainKey]: fixtureSession("s-main"),
     });
 
     mockConfig = { ...mockConfig, tools: { sessions: { visibility: "tree" } } };
@@ -858,9 +855,7 @@ describe("session_status tool", () => {
         updatedAt: 5,
         status: "done",
       },
-      [mainKey]: fixtureSession("s-main", {
-        status: "running",
-      }),
+      [mainKey]: fixtureSession("s-main"),
     });
 
     mockConfig = { ...mockConfig, tools: { sessions: { visibility: "tree" } } };

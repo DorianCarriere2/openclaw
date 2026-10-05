@@ -122,7 +122,6 @@ it("keeps accepted terminal writes and the clean-close receipt ahead of process 
     await replaceSessionEntry(target, {
       sessionId: event.sessionId,
       lifecycleRunId: event.runId,
-      status: "running",
       startedAt: 1_000,
       updatedAt: 1_000,
     });
@@ -489,7 +488,6 @@ it("joins scheduled plugin work before closing stores while retaining a deleted 
       {
         sessionId: terminalEvent.sessionId,
         lifecycleRunId: terminalEvent.runId,
-        status: "running",
         startedAt: 1_000,
         updatedAt: 1_000,
       },
