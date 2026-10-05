@@ -172,6 +172,11 @@ or emitted a fallback step. For Gateway RPC runs, `agent.wait` also joins termin
 replay publication after required settlement. Unmarked timeout and bare-abort observations
 retain their existing wait-layer retry handling.
 
+`chat.abort` acknowledges cancellation immediately with chat `aborted`. Once
+execution has started, the execution owner publishes the single aborted lifecycle
+terminal after its attempts settle; the abort handler does not publish an early
+`end`. Cancellation before execution starts is finalized by the abort handler.
+
 Cron attempt completions remain `finishing` across model fallbacks and
 interim-acknowledgment retries; worker `finishing` events do not claim execution
 settlement. Completed execution facts are captured before cron bookkeeping, but

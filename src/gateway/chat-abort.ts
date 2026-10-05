@@ -571,31 +571,34 @@ export function abortChatRunById(
       liveTextGroup,
     });
   }
-  emitAgentEvent({
-    runId,
-    ...(active.lifecycleGeneration ? { lifecycleGeneration: active.lifecycleGeneration } : {}),
-    sessionKey,
-    sessionId: active.sessionId,
-    agentId: active.agentId,
-    stream: "lifecycle",
-    data: {
-      phase: "end",
-      status: "cancelled",
-      aborted: true,
-      stopReason,
-      ...(active.toolErrorSummary ? { toolErrorSummary: active.toolErrorSummary } : {}),
-      // Pre-execution admission time is not an execution start.
-      startedAt: active.executionStarted === false ? undefined : active.startedAtMs,
-      ...(active.executionStarted === false
-        ? {
-            executionStarted: false,
-            providerStarted: false,
-            ...(stopReason === "timeout" ? { timeoutPhase: "queue" } : {}),
-          }
-        : {}),
-      endedAt: Date.now(),
-    },
-  });
+  // Once execution starts, its owner publishes the terminal after fallback and cleanup settle.
+  if (active.executionStarted !== true) {
+    emitAgentEvent({
+      runId,
+      ...(active.lifecycleGeneration ? { lifecycleGeneration: active.lifecycleGeneration } : {}),
+      sessionKey,
+      sessionId: active.sessionId,
+      agentId: active.agentId,
+      stream: "lifecycle",
+      data: {
+        phase: "end",
+        status: "cancelled",
+        aborted: true,
+        stopReason,
+        ...(active.toolErrorSummary ? { toolErrorSummary: active.toolErrorSummary } : {}),
+        // Pre-execution admission time is not an execution start.
+        startedAt: active.executionStarted === false ? undefined : active.startedAtMs,
+        ...(active.executionStarted === false
+          ? {
+              executionStarted: false,
+              providerStarted: false,
+              ...(stopReason === "timeout" ? { timeoutPhase: "queue" } : {}),
+            }
+          : {}),
+        endedAt: Date.now(),
+      },
+    });
+  }
   // Gateway listeners synchronously stamp the terminal observation. Keep the
   // entry as suspension-visible ownership until its persistence write settles.
   if (

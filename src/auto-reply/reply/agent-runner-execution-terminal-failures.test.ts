@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { awaitGateBeforeSettlement, createDeferred } from "../../../test/helpers/promise.js";
 import { createCliTimeoutError } from "../../agents/cli-runner/no-output-timeout-policy.js";
 import { FailoverError } from "../../agents/failover-error.js";
 import {
@@ -15,6 +16,12 @@ import {
   createAgentRunSupersededAbortError,
   createSessionPlacementSettlementClosedAbortError,
 } from "../../agents/run-termination.js";
+import {
+  abortChatRunById,
+  registerChatAbortController,
+  type ChatAbortControllerEntry,
+} from "../../gateway/chat-abort.js";
+import { createChatRunState } from "../../gateway/server-chat-state.js";
 import { CommandLaneClearedError, GatewayDrainingError } from "../../process/command-queue.js";
 import { getReplyPayloadMetadata } from "../reply-payload.js";
 import type { TemplateContext } from "../templating.js";
@@ -41,6 +48,97 @@ import { createReplyOperation } from "./reply-run-registry.js";
 const state = await setupAgentRunnerExecutionTestState();
 
 describe("executeAgentTurn: terminal failures", () => {
+  it.each(["rpc", "interrupt", "restart", "timeout"])(
+    "acknowledges %s cancellation before the execution owner publishes its only terminal",
+    async (stopReason) => {
+      const { onAgentEvent } = await import("../../infra/agent-events.js");
+      const runId = `chat-abort-${stopReason}`;
+      const sessionKey = "agent:main:abort-terminal";
+      const chatAbortControllers = new Map<string, ChatAbortControllerEntry>();
+      const registration = registerChatAbortController({
+        chatAbortControllers,
+        runId,
+        sessionKey,
+        sessionId: "session",
+        timeoutMs: 60_000,
+      });
+      const replyOperation = createReplyOperation({
+        sessionKey,
+        sessionId: "session",
+        resetTriggered: false,
+        upstreamAbortSignal: registration.controller.signal,
+      });
+      replyOperation.setPhase("running");
+      const entered = createDeferred();
+      const settle = createDeferred();
+      const events: Array<{ stream: string; data: Record<string, unknown> }> = [];
+      const unsubscribe = onAgentEvent((event) => {
+        if (event.runId === runId) {
+          events.push(event);
+        }
+      });
+      const broadcast = vi.fn();
+      state.runEmbeddedAgentMock.mockImplementationOnce(async () => {
+        registration.markExecutionStarted();
+        entered.resolve();
+        await settle.promise;
+        registration.controller.signal.throwIfAborted();
+      });
+      const { executeAgentTurn } = await import("./agent-runner-execution.js");
+      const execution = executeAgentTurn({
+        ...createMinimalRunAgentTurnParams({ replyOperation }),
+        sessionKey,
+        opts: { runId, abortSignal: registration.controller.signal },
+      });
+      try {
+        await awaitGateBeforeSettlement(entered.promise, execution, "execution must start");
+        expect(
+          abortChatRunById(
+            {
+              chatAbortControllers,
+              chatRunState: createChatRunState(),
+              removeChatRun: () => undefined,
+              agentRunSeq: new Map(),
+              broadcast,
+              nodeSendToSession: () => {},
+            },
+            { runId, sessionKey, stopReason },
+          ),
+        ).toEqual({ aborted: true });
+        expect(broadcast).toHaveBeenCalledWith(
+          "chat",
+          expect.objectContaining({ runId, state: "aborted", stopReason }),
+          expect.anything(),
+        );
+        const isTerminal = (event: (typeof events)[number]) =>
+          event.stream === "lifecycle" &&
+          (event.data.phase === "end" || event.data.phase === "error");
+        expect.soft(events.filter(isTerminal)).toEqual([]);
+
+        settle.resolve();
+        expect((await execution).outcome).toEqual({
+          kind: "aborted",
+          reason: stopReason === "restart" ? "restart" : "user",
+        });
+        const terminals = events.filter(isTerminal);
+        expect(terminals).toHaveLength(1);
+        expect(events.at(-1)).toBe(terminals[0]);
+        expect(terminals[0]?.data).toMatchObject({
+          phase: stopReason === "restart" ? "end" : "error",
+          aborted: true,
+          stopReason: stopReason === "rpc" || stopReason === "interrupt" ? "aborted" : stopReason,
+          executionSettled: true,
+        });
+      } finally {
+        settle.resolve();
+        await execution;
+        unsubscribe();
+        registration.cleanup();
+        replyOperation.complete();
+      }
+    },
+  );
+
   it("surfaces billing guidance for mixed-cause fallback exhaustion", async () => {
     state.runWithModelFallbackMock.mockRejectedValueOnce(
       createTestFallbackSummaryError({

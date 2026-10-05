@@ -381,3 +381,39 @@ it("joins its own terminal write without waiting for its own raw completion", as
   );
   expect(entries.has(runId)).toBe(false);
 });
+
+it("retains raw execution cleanup when a started run cancels itself", async () => {
+  const { entries, runId, entry, registration } = registeredRun();
+  await runWithChatAbortExecution(
+    entry,
+    async () => {
+      expect(registration.markExecutionStarted()).toBe(true);
+      expect(
+        abortChatRunById(
+          {
+            chatAbortControllers: entries,
+            chatRunState: createChatRunState(),
+            agentRunSeq: new Map(),
+            removeChatRun: () => undefined,
+            broadcast: () => {},
+            nodeSendToSession: () => {},
+          },
+          { runId, sessionKey: entry.sessionKey, stopReason: "rpc" },
+        ),
+      ).toEqual({ aborted: true });
+      expect(
+        await waitForChatAbortControllerRemoval({
+          entries,
+          targets: [{ runId, entry }],
+          timeoutMs: null,
+          signal: new AbortController().signal,
+        }),
+      ).toBe(true);
+      expect(entries.get(runId)).toBe(entry);
+      expect(entry.executionSettlement?.status).toBe("pending");
+      expect(entry.projectSessionTerminalPending).toBe(false);
+    },
+    registration.cleanup,
+  );
+  expect(entries.has(runId)).toBe(false);
+});
