@@ -51,6 +51,7 @@ import type {
   AgentDatabaseExecutionOpen,
   AgentDatabaseExecutionScope,
   AgentDatabaseGenerationClaim,
+  AgentDatabaseNativeGeneration,
   AgentDatabaseRequestExecutionSource,
   AgentDatabaseOperations,
 } from "./openclaw-agent-execution-contract.js";
@@ -112,20 +113,6 @@ async function settleAgentRegistration<T>(
   }
   return result.value;
 }
-
-export type AgentDatabaseNativeGeneration = {
-  failure(): "open-refused" | "native" | undefined;
-  isPrepared(): boolean;
-  captureClaim(): AgentDatabaseGenerationClaim;
-  run<T>(
-    source: AgentDatabaseRequestExecutionSource,
-    operation: (scope: AgentDatabaseExecutionScope) => Promise<T>,
-    assertCallerCurrent?: (identity?: AgentDatabaseExecutionFileIdentity) => void,
-    createIfMissing?: boolean,
-    signal?: AbortSignal,
-  ): Promise<T | undefined>;
-  close(): Promise<void>;
-};
 
 /** Bind a native claim to the same borrower and logical generation that captured it. */
 export function captureBorrowedAgentDatabaseGenerationClaim(
@@ -336,11 +323,21 @@ export function createAgentDatabaseNativeGeneration(
         if (
           request.stage === "prepare" &&
           isRecord(facts) &&
-          (facts.kind === "agent-integrity-check" || facts.kind === "agent-open-resume")
+          (facts.kind === "agent-integrity-check" ||
+            facts.kind === "agent-open-resume" ||
+            facts.kind === "agent-validation-start")
         ) {
           assertSourceCurrent();
           if (!lease || !isDeepStrictEqual(facts.lease, lease)) {
             throw new Error("Agent open notice differs from its captured native lease");
+          }
+          if (facts.kind === "agent-validation-start") {
+            // Lease cleanup can revoke borrowed proof. Capture before verification,
+            // so a later revocation still rejects the resulting publication.
+            receiveValidation = captureOpenClawAgentDatabaseAdmissionPublication({
+              agentId,
+              path: pathname,
+            });
           }
           if (facts.kind === "agent-integrity-check") {
             if (facts.check !== "quick" && facts.check !== "full") {

@@ -447,8 +447,10 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
                 .executeRemoteExecTurn
             : (await raceNodeWorkerOperation(loadWorkerTurnExecution(), turn.abortSignal))
                 .executeWorkerTurn;
+          const { withWorkerTurnTranscriptDatabase } =
+            await import("./worker-turn-transcript-target.js");
           assertPreparationCurrent();
-          return await execute({
+          const executionOptions = {
             environments: options.environments,
             onHandoff: (custody?: { requiresTerminalReceipt: true }) => {
               if (!admissionReported) {
@@ -471,7 +473,16 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
             turnClaim,
             runLocal,
             assertRunCurrent: remoteExec ? assertRunCurrent : assertPreparationCurrent,
-          });
+          };
+          return await withWorkerTurnTranscriptDatabase(
+            turn,
+            {
+              assertCurrent: assertPreparationCurrent,
+              prepareAuthority: () => options.placements.prepareTurnClaimAuthority(turnClaim),
+              signal: turn.abortSignal,
+            },
+            (sessionTarget) => execute({ ...executionOptions, turn: { ...turn, sessionTarget } }),
+          );
         } catch (error) {
           if (
             workspaceResolutionFailed ||
@@ -528,42 +539,45 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
                   waitTimeoutMs,
                 );
                 timeout.unref?.();
-                const admissionFacts = await options.placements.prepareRuntimeRefresh(
-                  placement.sessionId,
-                );
                 try {
-                  markDiagnosticRunProgress({
-                    sessionId: placement.sessionId,
-                    sessionKey: identity.sessionKey,
-                    runId: claim.runId,
-                    reason: "worker:runtime_refresh",
-                  });
-                  reportProvisioning();
-                  await options.waitForAdmissionNode({
-                    placement,
-                    signal: reconnectSignal,
-                    assertCurrent: () => {
-                      reconnectSignal.throwIfAborted();
-                      assertAdmissionCurrent();
-                      admissionFacts.assertCurrent();
-                      const waitingPlacement = options.placements.get(placement.sessionId);
-                      if (
-                        !matchesWorkerPlacementTarget(waitingPlacement, placement) ||
-                        waitingPlacement?.turnClaim ||
-                        waitingPlacement?.sessionKey !== identity.sessionKey ||
-                        waitingPlacement?.agentId !== identity.agentId ||
-                        waitingPlacement?.executionMode !== placement.executionMode ||
-                        admissionFacts.pendingResult
-                      ) {
-                        throw new Error(
-                          "Worker placement changed while waiting for node admission",
-                          { cause: error },
-                        );
-                      }
-                    },
-                  });
+                  const admissionFacts = await options.placements.prepareRuntimeRefresh(
+                    placement.sessionId,
+                  );
+                  try {
+                    markDiagnosticRunProgress({
+                      sessionId: placement.sessionId,
+                      sessionKey: identity.sessionKey,
+                      runId: claim.runId,
+                      reason: "worker:runtime_refresh",
+                    });
+                    reportProvisioning();
+                    await options.waitForAdmissionNode({
+                      placement,
+                      signal: reconnectSignal,
+                      assertCurrent: () => {
+                        reconnectSignal.throwIfAborted();
+                        assertAdmissionCurrent();
+                        admissionFacts.assertCurrent();
+                        const waitingPlacement = options.placements.get(placement.sessionId);
+                        if (
+                          !matchesWorkerPlacementTarget(waitingPlacement, placement) ||
+                          waitingPlacement?.turnClaim ||
+                          waitingPlacement?.sessionKey !== identity.sessionKey ||
+                          waitingPlacement?.agentId !== identity.agentId ||
+                          waitingPlacement?.executionMode !== placement.executionMode ||
+                          admissionFacts.pendingResult
+                        ) {
+                          throw new Error(
+                            "Worker placement changed while waiting for node admission",
+                            { cause: error },
+                          );
+                        }
+                      },
+                    });
+                  } finally {
+                    admissionFacts.release();
+                  }
                 } finally {
-                  admissionFacts.release();
                   clearTimeout(timeout);
                 }
               }

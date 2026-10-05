@@ -5,7 +5,7 @@ import {
   formatInboundMediaUnavailableText,
   formatInboundEnvelope,
   formatLocationText,
-  prepareInboundSessionEnvelopeContext,
+  resolveInboundSessionEnvelopeContextAsync,
   toInboundMediaFactsWithMetadata,
   toLocationContext,
   type BuildChannelInboundEventContextParams,
@@ -369,7 +369,7 @@ async function finalizeLineInboundContext<Event extends MessageEvent | PostbackE
     : undefined;
 
   const { storePath, envelopeOptions, previousTimestamp } =
-    await prepareInboundSessionEnvelopeContext({
+    await resolveInboundSessionEnvelopeContextAsync({
       cfg: params.cfg,
       agentId: params.route.agentId,
       sessionKey: params.route.sessionKey,

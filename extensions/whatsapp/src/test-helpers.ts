@@ -488,7 +488,7 @@ vi.mock("./auto-reply/monitor/runtime-api.js", async (importOriginal) => ({
   resolveChunkMode: () => undefined,
   resolveIdentityNamePrefix: resolveIdentityNamePrefixMock,
   resolveInboundLastRouteSessionKey: (params: { sessionKey: string }) => params.sessionKey,
-  prepareInboundSessionEnvelopeContext: async (params: {
+  resolveInboundSessionEnvelopeContextAsync: async (params: {
     cfg: { session?: { store?: string } } & Parameters<typeof resolveEnvelopeOptionsMock>[0];
     agentId: string;
   }) => ({

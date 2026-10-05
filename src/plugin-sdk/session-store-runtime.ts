@@ -20,7 +20,7 @@ import {
   readTranscriptStatsSync as readAccessorTranscriptStatsSync,
   updateSessionEntry,
 } from "../config/sessions/session-accessor.js";
-import { readSessionEntryReadOnlyInWorker } from "../config/sessions/session-entry-read-runtime.js";
+import { readSessionUpdatedAtInWorker } from "../config/sessions/session-entry-read-runtime.js";
 import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
 import { normalizeResolvedMaintenanceConfigInput } from "../config/sessions/store-maintenance.js";
 import type { ResolvedSessionMaintenanceConfigInput } from "../config/sessions/store-maintenance.js";
@@ -252,20 +252,16 @@ export async function patchSessionEntry(
   return entry ? projectPluginSessionEntry(entry) : null;
 }
 
-/** Reads the last activity timestamp for one session entry. */
+/** @deprecated Use readSessionUpdatedAtAsync. Retained until the next Plugin SDK major. */
 export function readSessionUpdatedAt(params: SessionStoreReadParams): number | undefined {
   return readAccessorSessionUpdatedAt(toSessionAccessScope(params));
 }
 
-/** Prepare the last activity timestamp through the session database reader. */
-export async function readSessionUpdatedAtAsync(
+/** Reads the last activity timestamp without creating a missing session store. */
+export function readSessionUpdatedAtAsync(
   params: SessionStoreReadParams,
 ): Promise<number | undefined> {
-  const entry = await readSessionEntryReadOnlyInWorker({
-    ...toSessionAccessScope(params),
-    snapshotFields: [],
-  });
-  return entry?.updatedAt;
+  return readSessionUpdatedAtInWorker(toSessionAccessScope(params));
 }
 
 export { resolveAmbientTranscriptWatermarkKey, updateAmbientTranscriptWatermark };

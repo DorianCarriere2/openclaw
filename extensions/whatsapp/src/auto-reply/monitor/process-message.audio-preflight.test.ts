@@ -79,7 +79,7 @@ vi.mock("./runtime-api.js", async (importOriginal) => ({
   readStoreAllowFromForDmPolicy: async () => [],
   recordSessionMetaFromInbound: async () => {},
   resolveChannelContextVisibilityMode: () => "standard",
-  prepareInboundSessionEnvelopeContext: async () => ({
+  resolveInboundSessionEnvelopeContextAsync: async () => ({
     storePath: "/tmp/sessions.json",
     envelopeOptions: {},
     previousTimestamp: undefined,

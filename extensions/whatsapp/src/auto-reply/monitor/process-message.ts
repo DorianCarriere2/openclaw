@@ -59,7 +59,7 @@ import {
   logVerbose,
   normalizeE164,
   resolveChannelContextVisibilityMode,
-  prepareInboundSessionEnvelopeContext,
+  resolveInboundSessionEnvelopeContextAsync,
   resolvePinnedMainDmOwnerFromAllowlist,
   isControlCommandMessage,
   shouldComputeCommandAuthorized,
@@ -196,7 +196,7 @@ export async function processMessage(params: {
     accountId: account.accountId,
   });
   const { storePath, envelopeOptions, previousTimestamp } =
-    await prepareInboundSessionEnvelopeContext({
+    await resolveInboundSessionEnvelopeContextAsync({
       cfg: params.cfg,
       agentId: params.route.agentId,
       sessionKey: params.route.sessionKey,

@@ -11,12 +11,12 @@ import {
   beginAgentDeletionJournal,
   completeAgentDeletionJournalInDatabase,
 } from "./agent-deletion-journal.js";
-import { assertNoOpenClawAgentDatabaseLeases } from "./openclaw-agent-db-lease.js";
-import { closeCachedOpenClawAgentDatabase } from "./openclaw-agent-db-lifecycle.js";
 import {
-  hasOpenClawAgentCanonicalValidation,
-  markOpenClawAgentCanonicalValidation,
-} from "./openclaw-agent-db-validation-cache.js";
+  assertNoOpenClawAgentDatabaseLeases,
+  claimOpenClawAgentDatabaseLease,
+  releaseOpenClawAgentDatabaseLease,
+} from "./openclaw-agent-db-lease.js";
+import { closeCachedOpenClawAgentDatabase } from "./openclaw-agent-db-lifecycle.js";
 import { withOpenClawAgentDatabaseWrite } from "./openclaw-agent-db-write.js";
 import {
   closeOpenClawAgentDatabaseByPathAsync,
@@ -131,7 +131,37 @@ it("admits cold storage in its worker and lends facts to every later native hand
   expect(inspections).toEqual([]);
 });
 
-it.each(["eviction", "additive-table", "missing-index", "alias", "contract-convergence"] as const)(
+it("publishes freshly verified proof to a previously admitted alias after stale lease cleanup", async () => {
+  const options = {
+    agentId: "main",
+    env: { OPENCLAW_STATE_DIR: tempDirs.make("agent-alias-stale-proof-") },
+  };
+  const canonical = openOpenClawAgentDatabase(options);
+  const aliasPath = path.join(options.env.OPENCLAW_STATE_DIR, "alias.sqlite");
+  fs.symlinkSync(canonical.path, aliasPath);
+  const alias = openOpenClawAgentDatabase({ ...options, path: aliasPath });
+  closeCachedOpenClawAgentDatabase(alias, { eviction: true });
+  const staleLease = claimOpenClawAgentDatabaseLease({ ...options, path: canonical.path });
+  openOpenClawStateDatabase({ env: options.env })
+    .db.prepare("UPDATE agent_database_leases SET owner_start_time=-1 WHERE lease_id=?")
+    .run(staleLease);
+  const observed = observeCallerSchemaInspections(canonical.path, aliasPath);
+  try {
+    await expect(
+      withOpenClawAgentDatabaseWrite(
+        { ...options, path: aliasPath },
+        (database) =>
+          database.db.prepare("SELECT COUNT(*) AS count FROM session_nodes").get()?.count,
+      ),
+    ).resolves.toBe(0);
+    expect(observed.inspections).toEqual([]);
+  } finally {
+    observed.restore();
+    releaseOpenClawAgentDatabaseLease(staleLease, { env: options.env }, "read-only");
+  }
+});
+
+it.each(["eviction", "additive-table", "missing-index", "alias"] as const)(
   "readmits an evicted host handle with its retained worker after %s",
   async (change) => {
     const options = {
@@ -146,15 +176,6 @@ it.each(["eviction", "additive-table", "missing-index", "alias", "contract-conve
           opened.db.exec("CREATE TABLE coldadmit_fixture(value TEXT)");
         } else if (change === "missing-index") {
           opened.db.exec("DROP INDEX idx_agent_cache_expiry");
-        } else if (change === "contract-convergence") {
-          opened.db.exec(`INSERT INTO session_nodes
-            (session_key, current_session_id, entry_json, updated_at)
-            VALUES ('agent:main:existing', 'existing', '{"sessionId":"existing","updatedAt":1}', 1);
-            UPDATE session_nodes SET entry_valid = 1;
-            DELETE FROM session_canonical_validation_pending;`);
-          expect(markOpenClawAgentCanonicalValidation(opened)).toBe(true);
-          expect(hasOpenClawAgentCanonicalValidation(opened)).toBe(true);
-          opened.db.exec("DROP TABLE session_key_contract");
         }
         return opened;
       });
@@ -178,13 +199,10 @@ it.each(["eviction", "additive-table", "missing-index", "alias", "contract-conve
             expect(facts?.tables.has("coldadmit_fixture")).toBe(change === "additive-table");
             expect(facts?.tables.has("session_nodes")).toBe(true);
             expect(facts?.tables.has("session_key_contract")).toBe(true);
-            if (change === "contract-convergence") {
-              expect(hasOpenClawAgentCanonicalValidation(reopened)).toBe(false);
-            }
             return reopened.db.prepare("SELECT COUNT(*) AS count FROM session_nodes").get()?.count;
           },
         );
-        expect(count).toBe(change === "contract-convergence" ? 1 : 0);
+        expect(count).toBe(0);
         nativeClaim.assertCurrent();
         expect(observed.inspections).toEqual([]);
       } finally {

@@ -160,7 +160,7 @@ vi.mock("./runtime-api.js", async (importOriginal) => {
     normalizeE164: (v: string) => v,
     recordSessionMetaFromInbound: async () => {},
     resolveChannelContextVisibilityMode: () => "off",
-    prepareInboundSessionEnvelopeContext: async () => ({
+    resolveInboundSessionEnvelopeContextAsync: async () => ({
       storePath: "/tmp",
       envelopeOptions: {},
       previousTimestamp: undefined,

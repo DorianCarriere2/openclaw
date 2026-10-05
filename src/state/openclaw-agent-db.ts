@@ -10,7 +10,6 @@ import {
   resolveExistingSqliteFileUri,
   supportsNodeSqliteExtensionLoading,
 } from "../infra/node-sqlite.js";
-import type { SqliteFileGeneration } from "../infra/sqlite-file-generation.js";
 import { quarantineOrphanedSqliteSidecars } from "../infra/sqlite-files.js";
 import {
   isTerminalSqliteIntegrityError,
@@ -72,7 +71,7 @@ import {
 import {
   agentDatabaseLifecycle as cache,
   startAgentDatabaseOpenTiming,
-  resolveAgentDatabaseIntegrityGateReason,
+  recordOpenClawAgentDatabaseOpenFailure,
   closeCachedOpenClawAgentDatabase,
   createAgentDatabaseScopeOwnedClose,
   closeMaintenanceAgentDatabase,
@@ -106,7 +105,6 @@ import {
 } from "./openclaw-agent-db-schema.js";
 import { assertAgentDatabaseTerminalOpenAllowed } from "./openclaw-agent-db-terminal.js";
 import {
-  clearOpenClawAgentDatabaseValidationCache,
   adoptOpenClawAgentDatabaseValidation,
   adoptOpenClawAgentDatabaseSchema,
   getOpenClawAgentDatabaseValidation,
@@ -125,6 +123,7 @@ import { requestOpenClawAgentDatabaseIntegrityCheck } from "./openclaw-database-
 import {
   clearOpenClawDatabaseQuarantine,
   readOpenClawDatabaseQuarantineFailure,
+  resolveAgentDatabaseIntegrityGateReason,
   type OpenClawAgentIntegrityVerification,
 } from "./openclaw-quarantine-store.js";
 import {
@@ -167,20 +166,6 @@ export async function confirmOpenClawAgentDatabaseIntegrity(
     { path: resolvedPath, kind: "agent", label: resolvedPath },
     lifetime,
   );
-}
-
-/** Latch background verification damage so later opens fail without rescanning. */
-export function recordOpenClawAgentDatabaseOpenFailure(
-  pathname: string,
-  error: Error,
-  generation?: SqliteFileGeneration,
-): boolean {
-  const recorded = cache.terminal.record(pathname, error, generation);
-  if (recorded) {
-    // Quarantine revokes this process's trust because doctor may replace the file.
-    invalidateOpenClawAgentDatabaseValidation(pathname);
-  }
-  return recorded;
 }
 
 /**
@@ -442,6 +427,12 @@ function* openOpenClawAgentDatabaseSteps(
       diagnostics.because ??= integrityRevoked
         ? agentDatabaseAdmissionProvenanceRefusal(preparedLease?.provenance, pathname)
         : undefined;
+      if (preparedLease && !isMainThread) {
+        requestSqliteWorkerOperationAdmission({
+          stage: "prepare",
+          facts: { kind: "agent-validation-start", lease: preparedLease.receipt },
+        });
+      }
       const requiresCurrentVersionConvergence = yield* agentDatabaseIntegrityBeforeMutationSteps(
         db,
         agentId,
@@ -738,23 +729,18 @@ export function retainOpenClawAgentDatabaseReadCandidates(
   }
 }
 
-/** Release fixture handles and pathname trust before a test root is recreated. */
-export function closeOpenClawAgentDatabasesForTest(rootPath?: string): void {
-  closeOpenClawAgentDatabases(rootPath);
-  clearOpenClawAgentDatabaseValidationCache(rootPath);
-  cache.terminal.clearAll(rootPath);
-}
-
 export {
   closeOpenClawAgentDatabaseByPath,
   closeOpenClawAgentDatabaseByPathAsync,
   closeOpenClawAgentDatabases,
+  closeOpenClawAgentDatabasesForTest,
   closeOpenClawAgentDatabasesAsync,
   disposeOpenClawAgentDatabaseByPath,
   inspectOpenClawAgentDatabaseOwner,
   isIncognitoOpenClawAgentDatabase,
   listOpenIncognitoAgentDatabases,
   readOpenIncognitoAgentDatabaseGeneration,
+  recordOpenClawAgentDatabaseOpenFailure,
   settleOpenClawAgentDatabaseWorkerClose,
   type OpenClawAgentDatabaseWorkerCloseResult,
 } from "./openclaw-agent-db-lifecycle.js";

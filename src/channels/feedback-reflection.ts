@@ -7,7 +7,7 @@ import {
 } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { buildHostChannelInboundEventContext } from "./inbound-event/context.js";
-import { prepareChannelInboundEnvelopeBuilder } from "./inbound-event/envelope.js";
+import { createChannelInboundEnvelopeBuilderAsync } from "./inbound-event/envelope.js";
 import { dispatchRoutedChannelTurn } from "./turn/lifecycle.js";
 
 export const DEFAULT_CHANNEL_FEEDBACK_REFLECTION_COOLDOWN_MS = 300_000;
@@ -123,11 +123,12 @@ export async function runChannelFeedbackReflection(params: {
   }
   const prompt = buildReflectionPrompt(params);
   const timestamp = Date.now();
-  const buildEnvelope = await prepareChannelInboundEnvelopeBuilder({
-    cfg: params.cfg,
-    route: { agentId: params.agentId, sessionKey: params.sessionKey },
-  });
-  const body = buildEnvelope({
+  const body = (
+    await createChannelInboundEnvelopeBuilderAsync({
+      cfg: params.cfg,
+      route: { agentId: params.agentId, sessionKey: params.sessionKey },
+    })
+  )({
     channel: params.channelLabel,
     from: "system",
     body: prompt,

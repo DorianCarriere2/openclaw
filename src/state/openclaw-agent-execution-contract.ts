@@ -68,6 +68,34 @@ export type OpenClawAgentDatabaseExecution = {
   release(): Promise<void>;
 };
 
+export type AgentDatabaseFileExecutionOwner = {
+  readonly kind: "file";
+  readonly agentId: string;
+  readonly sharedDatabaseKey: string;
+  borrow(
+    pathname: string,
+    expectedIdentity?: AgentDatabaseExecutionFileIdentity,
+    expectedCreationIdentity?: DatabasePathIdentity,
+    requestedPath?: string,
+  ): OpenClawAgentDatabaseExecution;
+  closeIdle(): Promise<void>;
+  close(): Promise<void>;
+};
+
+export type AgentDatabaseNativeGeneration = {
+  failure(): "open-refused" | "native" | undefined;
+  isPrepared(): boolean;
+  captureClaim(): AgentDatabaseGenerationClaim;
+  run<T>(
+    source: AgentDatabaseRequestExecutionSource,
+    operation: (scope: AgentDatabaseExecutionScope) => Promise<T>,
+    assertCallerCurrent?: (identity?: AgentDatabaseExecutionFileIdentity) => void,
+    createIfMissing?: boolean,
+    signal?: AbortSignal,
+  ): Promise<T | undefined>;
+  close(): Promise<void>;
+};
+
 export type AgentDatabaseFileExecutionOpen = {
   kind?: "file";
   leaseId: string;

@@ -259,9 +259,6 @@ export function refreshOpenClawAgentDatabaseSchema(
     );
     assertCanonicalAgentPersistenceVersion(db, pathname);
     if (convergence) {
-      if (validation) {
-        Atomics.store(new Int32Array(validation.canonicalReady), 0, 0);
-      }
       ensureAgentSchema(db, agentId, pathname);
     }
     // Publish facts from the same schema snapshot that passes the final contract checks.

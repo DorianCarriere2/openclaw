@@ -48,16 +48,6 @@ import {
 - `dispatchChannelInboundReply(...)`: records and dispatches an already
   assembled inbound reply with a delivery adapter.
 
-Prepare stored timestamps before formatting inbound messages. Await
-`prepareChannelInboundRouteEnvelope(...)` for a route and formatter, or
-`prepareChannelInboundEnvelopeBuilder({ cfg, route })` when the route is already
-selected. The returned formatter stays synchronous and performs no database
-reads, including when the session has no previous timestamp. Callers that format
-their own envelope can await `prepareInboundSessionEnvelopeContext(...)` or
-`readSessionUpdatedAtAsync(...)` from `openclaw/plugin-sdk/session-store-runtime`.
-The synchronous envelope and timestamp helpers remain available for existing SDK
-consumers; bundled channels use the asynchronous preparation helpers.
-
 For replies, channel plugins decode the platform reference and hydrate accessible
 parent messages. Pass the reference as `reply.replyToId` even when the parent
 cannot be fetched, and pass available text and sender facts as

@@ -271,8 +271,20 @@ export function captureOpenClawAgentDatabaseValidationTransfer(
     if (hasRevokedOpenClawAgentDatabaseValidation(pathname)) {
       Atomics.store(new Int32Array(validation.canonicalReady), 0, 0);
     }
+    const aliases =
+      captured.validation?.identity === identity
+        ? [...validatedPaths].flatMap(([candidate, entry]) =>
+            entry.validation?.agentId === database.agentId && entry.validation.identity === identity
+              ? [candidate]
+              : [],
+          )
+        : [];
     invalidateOpenClawAgentDatabaseValidation(pathname);
     validatedPaths.set(pathname, { validation, integrityVerified: true });
+    // A verified replacement is one physical receipt, including its already-admitted aliases.
+    for (const alias of aliases) {
+      validatedPaths.set(alias, { validation, integrityVerified: true });
+    }
     return true;
   };
 }
@@ -288,6 +300,30 @@ export function captureOpenClawAgentDatabaseAdmissionPublication(
     if (!accepted || !schema || Atomics.load(new Int32Array(schema.valid), 0) !== 1) {
       throw new Error("Agent schema admission changed before publication; retry the operation");
     }
+  };
+}
+
+/** An alias may consume the exact acknowledged physical receipt without revoking it again. */
+export function captureOpenClawAgentDatabaseAliasPublication(
+  database: Pick<ValidationDatabase, "agentId" | "path">,
+): (identity: string, received: unknown) => void {
+  const publish = captureOpenClawAgentDatabaseAdmissionPublication(database);
+  return (identity, received) => {
+    const current = getOpenClawAgentDatabaseValidationForTransfer(database);
+    if (
+      isRecord(received) &&
+      received.agentId === database.agentId &&
+      received.identity === identity &&
+      current?.identity === identity &&
+      current.valid === received.valid &&
+      current.schema &&
+      isRecord(received.schema) &&
+      current.schema.valid === received.schema.valid &&
+      Atomics.load(new Int32Array(current.schema.valid), 0) === 1
+    ) {
+      return;
+    }
+    publish(identity, received);
   };
 }
 

@@ -26,6 +26,8 @@ import { resolveOpenClawAgentSqlitePath } from "./openclaw-agent-db.paths.js";
 import type {
   AgentDatabaseExecutionFileIdentity,
   AgentDatabaseExecutionScope,
+  AgentDatabaseFileExecutionOwner,
+  AgentDatabaseNativeGeneration,
   AgentDatabaseRequestExecutionSource,
   OpenClawAgentDatabaseExecution,
 } from "./openclaw-agent-execution-contract.js";
@@ -38,7 +40,6 @@ import {
   createAgentDatabaseNativeGeneration,
   supportsAgentDatabaseExecutionScope,
   supportsOpenClawAgentDatabaseExecution,
-  type AgentDatabaseNativeGeneration,
 } from "./openclaw-agent-execution-native.js";
 import {
   observeOpenClawDatabaseMaintenanceResource,
@@ -57,26 +58,12 @@ import {
 
 export { supportsOpenClawAgentDatabaseExecution } from "./openclaw-agent-execution-native.js";
 
-type ExecutionOwner = {
-  readonly kind: "file";
-  readonly agentId: string;
-  readonly sharedDatabaseKey: string;
-  borrow(
-    pathname: string,
-    expectedIdentity?: AgentDatabaseExecutionFileIdentity,
-    expectedCreationIdentity?: DatabasePathIdentity,
-    requestedPath?: string,
-  ): OpenClawAgentDatabaseExecution;
-  closeIdle(): Promise<void>;
-  close(): Promise<void>;
-};
-
 const log = createSubsystemLogger("state/agent-db");
 // References are derived; the canonical agent and shared resource owners govern retirement.
 const executionState = resolveGlobalSingleton<{
-  owners: Map<string, ExecutionOwner | IncognitoAgentExecutionOwner>;
+  owners: Map<string, AgentDatabaseFileExecutionOwner | IncognitoAgentExecutionOwner>;
   // The slot stays occupied during eviction and after failed cleanup.
-  idle?: ExecutionOwner;
+  idle?: AgentDatabaseFileExecutionOwner;
 }>(Symbol.for("openclaw.agentDatabaseExecutionOwners"), () => ({ owners: new Map() }));
 const executions = executionState.owners;
 const runInExecutionOwnerContext = AsyncLocalStorage.snapshot();
@@ -294,13 +281,13 @@ function createAgentDatabaseExecution(
       await nativeClosing;
       assertCallerCurrent();
     }
-    if (cleanupFailure) {
-      // A transient lifecycle refusal must not poison every later borrower.
-      // Retire the original generation before admitting any replacement work.
+    // Retire a failed or refused native generation before admitting replacement work.
+    if (cleanupFailure || generation?.failure()) {
       await closeNative();
       assertCurrent();
       source.assertCurrent();
       assertCallerCurrent();
+      signal?.throwIfAborted();
     }
     if (!generation) {
       for (let idle = executionState.idle; idle && idle !== owner; idle = executionState.idle) {
@@ -411,7 +398,7 @@ function createAgentDatabaseExecution(
       throw error;
     }
   }
-  const owner: ExecutionOwner = {
+  const owner: AgentDatabaseFileExecutionOwner = {
     kind: "file",
     agentId,
     get sharedDatabaseKey() {
@@ -518,6 +505,7 @@ function createAgentDatabaseExecution(
             agentDatabaseLifecycle.pending.has(pathname) ||
             nativeClosing ||
             cleanupFailure ||
+            generation?.failure() ||
             !generation?.isPrepared()
           ) {
             return undefined;
@@ -662,11 +650,8 @@ function createAgentDatabaseExecution(
       })().catch((error: unknown) => {
         closing = undefined;
         if (!revoked) {
-          // A rejected native close has not retired anything yet: the owner still holds
-          // its generation and lease, and `executions` still points at it. Leaving it
-          // retired would refuse every later borrower with "admission is closed" until
-          // the process drains. Re-admit the owner instead; its retained cleanupFailure
-          // makes the next request retry the native close before any new work.
+          // Failed cleanup retains this generation and lease. Let later borrowers retry;
+          // explicit revocation still prevents new work.
           retired = false;
         }
         throw error;

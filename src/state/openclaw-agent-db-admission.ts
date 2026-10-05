@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { isMainThread } from "node:worker_threads";
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { cloneEnvWithPlatformSemantics } from "../config/config-env-vars.js";
 import { resolveStateDir } from "../config/state-dir.js";
 import { racePromiseWithAbortSignal } from "../infra/abort-signal.js";
@@ -58,7 +59,7 @@ import {
   readExistingAgentSchemaMeta,
 } from "./openclaw-agent-db-schema-helpers.js";
 import {
-  captureOpenClawAgentDatabaseAdmissionPublication,
+  captureOpenClawAgentDatabaseAliasPublication,
   getOpenClawAgentDatabaseValidationForTransfer,
   type OpenClawAgentDatabaseValidation,
 } from "./openclaw-agent-db-validation-cache.js";
@@ -570,9 +571,9 @@ async function withWorkerAdmission<T>(
   const creationClaim = captureAgentCreationClaim(options);
   const identity = readDatabasePathIdentitySync(pathname);
   const agentId = normalizeAgentId(options.agentId);
-  const publishAlias =
+  let publishAlias =
     identity.canonicalPath !== pathname
-      ? captureOpenClawAgentDatabaseAdmissionPublication({ agentId, path: pathname })
+      ? captureOpenClawAgentDatabaseAliasPublication({ agentId, path: pathname })
       : undefined;
   const completion = createDeferredCore();
   let revoked = false;
@@ -594,7 +595,7 @@ async function withWorkerAdmission<T>(
     }
   };
   const resource = {
-    agentId: options.agentId,
+    agentId,
     path: pathname,
     revoke: () => {
       revoked = true;
@@ -630,6 +631,17 @@ async function withWorkerAdmission<T>(
         admission: createSqliteWorkerOperationAdmission((request, grant) => {
           binding.authorize(request);
           assertAdmission();
+          if (
+            publishAlias &&
+            request.stage === "prepare" &&
+            isRecord(request.facts) &&
+            request.facts.kind === "agent-validation-start"
+          ) {
+            publishAlias = captureOpenClawAgentDatabaseAliasPublication({
+              agentId,
+              path: pathname,
+            });
+          }
           if (!grant()) {
             throw new Error("Agent database preparation lost its admission");
           }

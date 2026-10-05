@@ -1,6 +1,6 @@
 import { resolveHumanDelayConfig } from "openclaw/plugin-sdk/agent-runtime";
 import {
-  prepareChannelInboundEnvelopeBuilder,
+  createChannelInboundEnvelopeBuilderAsync,
   hasFinalInboundReplyDispatch,
   resolveInboundReplyDispatchCounts,
 } from "openclaw/plugin-sdk/channel-inbound";
@@ -72,8 +72,8 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
     getMemberDisplayName,
     resolveLiveUserAllowlist = resolveMatrixMonitorLiveUserAllowlist,
     resolveStorePath: resolveStorePathImpl = resolveStorePath,
-    prepareChannelInboundEnvelopeBuilder:
-      prepareChannelInboundEnvelopeBuilderImpl = prepareChannelInboundEnvelopeBuilder,
+    createChannelInboundEnvelopeBuilderAsync:
+      createChannelInboundEnvelopeBuilderImpl = createChannelInboundEnvelopeBuilderAsync,
     resolveHumanDelayConfig: resolveHumanDelayConfigImpl = resolveHumanDelayConfig,
   } = params;
   const handlerConfig: MatrixHandlerRuntimeConfig = {
@@ -83,7 +83,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
     configuredBotUserIds,
     resolveLiveUserAllowlist,
     resolveStorePath: resolveStorePathImpl,
-    prepareChannelInboundEnvelopeBuilder: prepareChannelInboundEnvelopeBuilderImpl,
+    createChannelInboundEnvelopeBuilderAsync: createChannelInboundEnvelopeBuilderImpl,
     resolveHumanDelayConfig: resolveHumanDelayConfigImpl,
   };
   const handlerState = createMatrixHandlerState({

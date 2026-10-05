@@ -1,5 +1,5 @@
 import type { resolveHumanDelayConfig } from "openclaw/plugin-sdk/agent-runtime";
-import type { prepareChannelInboundEnvelopeBuilder } from "openclaw/plugin-sdk/channel-inbound";
+import type { createChannelInboundEnvelopeBuilderAsync } from "openclaw/plugin-sdk/channel-inbound";
 import type { PluginRuntime, RuntimeLogger } from "openclaw/plugin-sdk/plugin-runtime";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime";
 import type { resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
@@ -65,7 +65,7 @@ export type MatrixMonitorHandlerParams = {
   needsRoomAliasesForConfig: boolean;
   resolveLiveUserAllowlist?: typeof resolveMatrixMonitorLiveUserAllowlist;
   resolveStorePath?: typeof resolveStorePath;
-  prepareChannelInboundEnvelopeBuilder?: typeof prepareChannelInboundEnvelopeBuilder;
+  createChannelInboundEnvelopeBuilderAsync?: typeof createChannelInboundEnvelopeBuilderAsync;
   finalizeInboundContext?: (ctx: Record<string, unknown>) => unknown;
   resolveHumanDelayConfig?: typeof resolveHumanDelayConfig;
 };
@@ -76,6 +76,6 @@ export type MatrixHandlerRuntimeConfig = MatrixMonitorHandlerParams & {
   configuredBotUserIds: ReadonlySet<string>;
   resolveLiveUserAllowlist: typeof resolveMatrixMonitorLiveUserAllowlist;
   resolveStorePath: typeof resolveStorePath;
-  prepareChannelInboundEnvelopeBuilder: typeof prepareChannelInboundEnvelopeBuilder;
+  createChannelInboundEnvelopeBuilderAsync: typeof createChannelInboundEnvelopeBuilderAsync;
   resolveHumanDelayConfig: typeof resolveHumanDelayConfig;
 };

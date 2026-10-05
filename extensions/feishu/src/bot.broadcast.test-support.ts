@@ -57,11 +57,7 @@ vi.mock("openclaw/plugin-sdk/session-store-runtime", async () => {
   const actual = await vi.importActual<typeof import("openclaw/plugin-sdk/session-store-runtime")>(
     "openclaw/plugin-sdk/session-store-runtime",
   );
-  return {
-    ...actual,
-    readSessionUpdatedAtAsync: async () => undefined,
-    resolveStorePath: mockResolveStorePath,
-  };
+  return { ...actual, resolveStorePath: mockResolveStorePath };
 });
 
 vi.mock("./reply-dispatcher.js", () => ({

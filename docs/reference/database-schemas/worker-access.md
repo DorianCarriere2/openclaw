@@ -139,6 +139,14 @@ work. Read refreshes retain the original discovery owner and never replay a
 consumer that has begun effects. Process-held incognito reads keep their existing
 owner. Configuration, schemas, and stored formats are unchanged.
 
+Session creation rereads full target metadata through that same reader using its
+already-selected store and canonical keys. Lifecycle custody and current caller
+authority remain with creation; worker preparation does not grant permission.
+The ordered reader retains its writer FIFO and native mutation witness through
+validation, and database retirement revokes the read before disclosure. Creation
+rechecks its live guard after preparation before allocating resources. Incognito
+keeps its native owner. Schemas, retained bytes, and update behavior are unchanged.
+
 After session discovery selects an absent store, its first registration by that
 same database owner preserves the captured registry witness. The existing mutation
 filter retains that first physical generation; different owners, replacement, and
@@ -615,12 +623,13 @@ The worker validates changed schemas before publishing replacement facts while
 retaining its native generation. File replacement and revoked integrity still
 require fresh admission. Mutable agent ownership is checked again on acquisition
 and when each connection opens.
+Cloud turns retain the admitted handle through execution and finalization, so
+their existing synchronous transcript-authority checks cannot become cold openers
+after an idle eviction.
 
-Bundled inbound channels prepare their last-session timestamps in the session
-reader before formatting envelopes. Reply initialization carries lifecycle
-timestamps in its existing worker snapshot. The synchronous SQLite open/borrow
-and channel-envelope SDK contracts released in 2026.9.8 retain local admission
-when invoked without prepared facts. The released async SQLite helper also keeps
+Reply initialization carries lifecycle timestamps in its existing worker snapshot.
+The synchronous SQLite open/borrow SDK contracts released in 2026.9.8 retain local
+admission when invoked without prepared facts. The released async SQLite helper keeps
 its native checkpoints for arbitrary synchronous SDK guards. Bundled callers
 use the same owner's runtime driver with authority that is safe inside worker
 grants; same-database row predicates stay in the worker. Creation claims carry
@@ -1522,6 +1531,15 @@ update behavior are unchanged. Drain inspection reads pending and claimed rows i
 one snapshot so a concurrent release cannot hide a lane head between reads.
 Shutdown joins deferred settlement even when it starts before dispatch returns.
 
+Inbound envelope timestamps use the existing session read worker. Bundled channels
+await preparation at their formatting boundary and carry the timestamp through
+synchronous history formatting. Missing stores remain absent; later session creation
+retains its own worker admission. Each message reads current activity from its
+captured physical source, and timestamp facts never grant channel or turn authority.
+Released synchronous timestamp and envelope SDK helpers retain their compatibility
+contract until the next Plugin SDK major. Schemas, stored bytes, retention, and
+update behavior are unchanged.
+
 Before yielding, capture the physical store target, source/admission scope,
 request identity, and the owning projection revision. The lifecycle owner retains
 that source until reader cleanup or write settlement completes. Workers return
@@ -2354,6 +2372,15 @@ before preparing hooks or model calls. The read retains the captured transcript
 identity and cancellation signal; the caller rechecks its live writer authority
 before using the result. Caller-owned in-memory recovery keeps its existing
 buffer. Compaction persistence, stored bytes, retention, and update behavior are
+unchanged.
+
+Manual compaction also prepares transcript statistics and current session entries
+through the existing database executor and entry readers. Direct and queued compaction
+prepare harness selection and successor facts through those same owners, then
+recheck caller authority after reading. Legacy successor markers retain their
+stored-key selection, and final writer comparisons remain transaction-local.
+The released synchronous statistics SDK and process-held incognito paths keep
+their existing owners. Schemas, stored bytes, retention, and update behavior are
 unchanged.
 
 SessionManager's awaited persistence family uses its existing SQLite writer
